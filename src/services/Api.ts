@@ -24,7 +24,7 @@ export function normalizeApiUrl(rawUrl: string): string {
   return url;  
 }
 
-// URL du backend Spring Boot : variable d'environnement VITE_API_BASE_URL, sinon http://localhost:8080/api
+// URL du backend Spring Boot : variable d'environnement VITE_API_BASE_URL
 const ENV_API_URL = import.meta.env.VITE_API_BASE_URL;
 export const DEFAULT_API_BASE_URL = ENV_API_URL? normalizeApiUrl(ENV_API_URL): 'http://localhost:8080/api';
 
