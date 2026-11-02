@@ -1,0 +1,6 @@
+{
+  "name": "TravelBanned",
+  "description": "Application de gestion et vérification de sécurité des mots de passe bannis et politiques d'accès TravelBanned.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

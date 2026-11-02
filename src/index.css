@@ -1,0 +1,87 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-asky-brown-50: #faf8f6;
+  --color-asky-brown-100: #f4f0eb;
+  --color-asky-brown-200: #e8ddd2;
+  --color-asky-brown-300: #d9c5b0;
+  --color-asky-brown-400: #c7a688;
+  --color-asky-brown-500: #b8906b;
+  --color-asky-brown-600: #a67c5a;
+  --color-asky-brown-700: #8b654a;
+  --color-asky-brown-800: #6f5240;
+  --color-asky-brown-900: #5a4335;
+  --color-asky-brown-950: #2f221a;
+
+  --color-asky-orange-50: #fffbeb;
+  --color-asky-orange-100: #fef3c7;
+  --color-asky-orange-200: #fde68a;
+  --color-asky-orange-300: #fcd34d;
+  --color-asky-orange-400: #fbbf24;
+  --color-asky-orange-500: #f59e0b;
+  --color-asky-orange-600: #d97706;
+  --color-asky-orange-700: #b45309;
+  --color-asky-orange-800: #92400e;
+  --color-asky-orange-900: #78350f;
+  --color-asky-orange-950: #451a03;
+}
+
+@layer base {
+  body {
+    @apply antialiased text-gray-800 bg-gray-50 dark:bg-gray-900 dark:text-gray-100;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
+
+/* Custom scrollbars for data tables */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.4);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.7);
+}
+
+/* Print Styles for Official Dossier */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .printable-dossier,
+  .printable-dossier * {
+    visibility: visible;
+  }
+
+  .printable-dossier {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 24px !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
