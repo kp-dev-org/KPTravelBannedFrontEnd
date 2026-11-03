@@ -11,6 +11,8 @@ const LanguageContext = createContext<LanguageContextType | undefined>(undefined
 // Dictionnaire de traductions bilingue complet
 const translations = {
   fr: {
+
+    'app.loading': 'Vérification de session...',
     // Navigation
     'nav.dashboard': 'Tableau de bord',
     'nav.passengers': 'Passagers interdits',
@@ -24,6 +26,7 @@ const translations = {
     'nav.notifications': 'Notifications',
     'nav.changeLanguage': 'Langue',
     'nav.status': 'Statut Backend',
+    'nav.searchPlaceholder': 'Rechercher un passager ou passeport...',
 
     // Login
     'login.title': 'PassBanned',
@@ -98,6 +101,7 @@ const translations = {
     'dashboard.lowDesc': 'Non-conformités administratives mineures',
     'dashboard.vigilanceNotice': 'nécessitent une vigilance maximale à l\'embarquement.',
     'dashboard.retry': 'Réessayer',
+    'dashboard.loading': 'Chargement...',
 
     // Gate Check
     'gate.title': 'Contrôle Express Embarquement',
@@ -413,6 +417,7 @@ const translations = {
     'common.required': 'Requis',
   },
   en: {
+    'app.loading': 'Checking session...',
     // Navigation
     'nav.dashboard': 'Dashboard',
     'nav.passengers': 'Banned Passengers',
@@ -426,6 +431,7 @@ const translations = {
     'nav.notifications': 'Notifications',
     'nav.changeLanguage': 'Language',
     'nav.status': 'Backend Status',
+    'nav.searchPlaceholder': 'Search passenger or passport...',
 
     // Login
     'login.title': 'PassBanned',
@@ -500,6 +506,7 @@ const translations = {
     'dashboard.lowDesc': 'Minor administrative non-compliances',
     'dashboard.vigilanceNotice': 'require maximum vigilance during boarding.',
     'dashboard.retry': 'Retry',
+    'dashboard.loading': 'Loading...',
 
     // Gate Check
     'gate.title': 'Gate Boarding Clearance',

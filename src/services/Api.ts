@@ -21,12 +21,14 @@ export function normalizeApiUrl(rawUrl: string): string {
     url = `${url}/api`;
   }
 
-  return url;  
+  return url;
 }
 
-// URL du backend Spring Boot : variable d'environnement VITE_API_BASE_URL
+// URL du backend Spring Boot : variable d'environnement VITE_API_BASE_URL, sinon http://localhost:8080/api
 const ENV_API_URL = import.meta.env.VITE_API_BASE_URL;
-export const DEFAULT_API_BASE_URL = ENV_API_URL? normalizeApiUrl(ENV_API_URL): 'http://localhost:8080/api';
+export const DEFAULT_API_BASE_URL = ENV_API_URL
+  ? normalizeApiUrl(ENV_API_URL)
+  : 'http://localhost:8080/api';
 
 // Suppression définitive de tout ancien lien conservé dans le localStorage
 try {
@@ -61,6 +63,7 @@ declare global {
 
 // Jeton FlyAsky conservé strictement en mémoire (pas de localStorage - Spécification FlyAsky §5)
 let flyAskyJwtInMemory: string | null = null;
+let flyAskySessionTokenInMemory: string | null = null;
 let activeUserEmail: string | null = null;
 let renewalTimer: any = null;
 
@@ -72,6 +75,43 @@ export function getActiveUserEmail(): string | null {
   return activeUserEmail;
 }
 
+export function setFlyAskySessionToken(token: string | null): void {
+  flyAskySessionTokenInMemory = token;
+}
+
+export function getFlyAskySessionToken(): string | null {
+  return flyAskySessionTokenInMemory;
+}
+
+export function parseJwtPayload(token: string): { exp?: number; sub?: string; email?: string; [key: string]: any } | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const jsonString = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonString);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Spécification FlyAsky §5 (Point 3) :
+ * Vérifie si le JWT expire dans moins d'une minute (< 60 secondes).
+ */
+export function isJwtExpiringSoon(token: string, thresholdSeconds = 60): boolean {
+  const payload = parseJwtPayload(token);
+  if (!payload || !payload.exp) return false;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const remainingSeconds = payload.exp - nowSeconds;
+  return remainingSeconds <= thresholdSeconds;
+}
+
 export function setFlyAskyJwt(token: string | null): void {
   flyAskyJwtInMemory = token;
   if (renewalTimer) {
@@ -79,12 +119,20 @@ export function setFlyAskyJwt(token: string | null): void {
     renewalTimer = null;
   }
 
-  // Spécification FlyAsky §5 : Renouveler proactivement avant l'expiration (durée JWT: 10 min)
-  // On déclenche le renouvellement à 7 minutes (420 secondes) pour une fluidité totale.
+  // Spécification FlyAsky §5 (Point 3) :
+  // Le renouveler par GET /token quand il expire dans moins d'une minute (durée de vie totale: 10 minutes)
   if (token) {
+    const payload = parseJwtPayload(token);
+    let delayMs = 9 * 60 * 1000; // Par défaut à 9 min (1 min avant 10 min)
+    if (payload && payload.exp) {
+      const expMs = payload.exp * 1000;
+      // Déclencher exactement 60 secondes avant l'expiration du token
+      delayMs = Math.max(1000, expMs - 60 * 1000 - Date.now());
+    }
+
     renewalTimer = setTimeout(() => {
-      authService.refreshFlyAskyToken(activeUserEmail || undefined).catch(() => {});
-    }, 420 * 1000);
+      authService.refreshFlyAskyToken().catch(() => {});
+    }, delayMs);
   }
 }
 
@@ -102,11 +150,35 @@ const api = axios.create({
   },
 });
 
-// Intercepteur de requête : présente le JWT FlyAsky et notifie l'activité utilisateur
-api.interceptors.request.use((config) => {
-  if (flyAskyJwtInMemory) {
+// Intercepteur de requête :
+// - Vérifie pro-activement si le JWT expire dans moins d'une minute (§5 point 3)
+// - Injecte le JWT en mémoire dans Authorization: Bearer <JWT>
+api.interceptors.request.use(async (config) => {
+  const isAuthRoute =
+    config.url?.includes('/auth/flyasky/refresh-token') ||
+    config.url?.includes('/auth/flyasky/token') ||
+    config.url?.includes('/auth/login') ||
+    config.url?.includes('/auth/logout');
+
+  // Si le JWT expire dans moins d'une minute (< 60s), renouveler pro-activement par GET /token avant envoi
+  if (flyAskyJwtInMemory && !isAuthRoute) {
+    if (isJwtExpiringSoon(flyAskyJwtInMemory, 60)) {
+      try {
+        const freshJwt = await authService.refreshFlyAskyToken();
+        if (freshJwt) {
+          config.headers.Authorization = `Bearer ${freshJwt}`;
+          if (typeof window.notifyUserActivity === 'function') {
+            window.notifyUserActivity();
+          }
+          return config;
+        }
+      } catch (err) {
+        console.warn('Renouvellement anticipé du JWT FlyAsky échoué:', err);
+      }
+    }
     config.headers.Authorization = `Bearer ${flyAskyJwtInMemory}`;
   }
+
   if (typeof window.notifyUserActivity === 'function') {
     window.notifyUserActivity();
   }
@@ -124,15 +196,25 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    // Spécification FlyAsky §5 (Point 4) : sur 401, renouveler une fois, puis retenter
+    // Spécification FlyAsky §5 (Point 4) : sur 401 de votre API : renouveler une fois, puis retenter
     const isAuthPath =
       originalRequest?.url?.includes('/auth/login') ||
-      originalRequest?.url?.includes('/auth/flyasky/refresh-token');
+      originalRequest?.url?.includes('/auth/flyasky/verify') ||
+      originalRequest?.url?.includes('/auth/flyasky/refresh-token') ||
+      originalRequest?.url?.includes('/auth/flyasky/token');
+
+    // SÉCURITÉ : Si la session est verrouillée suite à inactivité (20 min), ne JAMAIS renouveler en douce
+    if (sessionStorage.getItem('passbanned_session_locked') === 'true') {
+      if (typeof window.handleSessionExpired === 'function') {
+        window.handleSessionExpired();
+      }
+      return Promise.reject(error);
+    }
 
     if (error.response?.status === 401 && !originalRequest?._retry && !isAuthPath) {
       originalRequest._retry = true;
       try {
-        const newJwt = await authService.refreshFlyAskyToken(activeUserEmail || undefined);
+        const newJwt = await authService.refreshFlyAskyToken();
         if (newJwt) {
           originalRequest.headers.Authorization = `Bearer ${newJwt}`;
           return api(originalRequest);
@@ -283,15 +365,24 @@ export async function pingBackend(): Promise<{ online: boolean; message: string;
   const targetBaseUrl = DEFAULT_API_BASE_URL;
   const start = performance.now();
   try {
-    await axios.get(`${targetBaseUrl}/passengers/stats`, { timeout: 4000, withCredentials: true });
+    // Tentative sur /passengers/stats ou /auth/me
+    await axios.get(`${targetBaseUrl}/auth/me`, { timeout: 4000, withCredentials: true });
     const latencyMs = Math.round(performance.now() - start);
     return { online: true, message: `Connecté à Spring Boot (${latencyMs}ms)`, latencyMs };
   } catch (err: any) {
-    try {
-      await axios.get(`${targetBaseUrl}/passengers`, { params: { page: 0, size: 1 }, timeout: 4000, withCredentials: true });
-      const latencyMs = Math.round(performance.now() - start);
+    const latencyMs = Math.round(performance.now() - start);
+    // Si le serveur Spring Boot renvoie un statut HTTP (401, 403, 200, etc.), il est bien en ligne !
+    if (err.response && typeof err.response.status === 'number') {
       return { online: true, message: `Connecté à Spring Boot (${latencyMs}ms)`, latencyMs };
-    } catch {
+    }
+
+    try {
+      await axios.get(`${targetBaseUrl}/passengers/stats`, { timeout: 4000, withCredentials: true });
+      return { online: true, message: `Connecté à Spring Boot (${latencyMs}ms)`, latencyMs };
+    } catch (fallbackErr: any) {
+      if (fallbackErr.response && typeof fallbackErr.response.status === 'number') {
+        return { online: true, message: `Connecté à Spring Boot (${latencyMs}ms)`, latencyMs };
+      }
       return {
         online: false,
         message: 'Serveur Spring Boot inaccessible. Vérifiez l\'URL et le serveur.',
@@ -336,6 +427,7 @@ export const authService = {
   },
 
   verifyFlyAskyOtp: async (challengeId: string, email: string, otp: string): Promise<any> => {
+    email = email.trim().toLowerCase();
     const response = await api.post('/auth/flyasky/verify', { challengeId, email, otp });
     const data = response.data;
 
@@ -343,6 +435,9 @@ export const authService = {
       // Stocker le JWT FlyAsky strictement en mémoire (pas de localStorage)
       if (data.token) {
         setFlyAskyJwt(data.token);
+      }
+      if (data.sessionToken) {
+        setFlyAskySessionToken(data.sessionToken);
       }
       return {
         success: true,
@@ -362,21 +457,52 @@ export const authService = {
   },
 
   refreshFlyAskyToken: async (email?: string): Promise<string | null> => {
+    // Si la session est verrouillée pour inactivité, refuser catégoriquement le renouvellement
+    if (sessionStorage.getItem('passbanned_session_locked') === 'true') {
+      return null;
+    }
+
     try {
       const targetEmail = email || activeUserEmail;
-      const response = await api.post(
-        '/auth/flyasky/refresh-token',
-        targetEmail ? { email: targetEmail } : {}
-      );
+      const headers: Record<string, string> = {};
+      if (flyAskySessionTokenInMemory) {
+        headers['X-Session-Token'] = flyAskySessionTokenInMemory;
+      }
+
+      // Cycle du JWT - Point 3 : renouveler par GET /token
+      const response = await api.get('/auth/flyasky/token', {
+        headers,
+        params: targetEmail ? { email: targetEmail } : undefined,
+      });
+
       if (response.data?.success && response.data?.token) {
         setFlyAskyJwt(response.data.token);
         return response.data.token;
       }
       return null;
     } catch (e) {
-      console.warn('Renouvellement automatique du JWT FlyAsky échoué', e);
+      console.warn('Renouvellement automatique du JWT FlyAsky via GET /token échoué', e);
       return null;
     }
+  },
+
+  expireSession: async (email?: string): Promise<void> => {
+    try {
+      await api.post('/auth/expire-session', {
+        email: email || activeUserEmail,
+        sessionToken: flyAskySessionTokenInMemory,
+      });
+    } catch (e) {
+      console.warn('Erreur notification expiration session backend', e);
+    } finally {
+      setFlyAskyJwt(null);
+      setFlyAskySessionToken(null);
+    }
+  },
+
+  getFlyAskyCurrentSession: async (): Promise<any> => {
+    const response = await api.get('/auth/flyasky/session');
+    return response.data;
   },
 
   getCurrentUser: async (): Promise<ApiUser> => {
@@ -386,12 +512,13 @@ export const authService = {
 
   logout: async (): Promise<void> => {
     try {
-      await api.post('/auth/logout');
+      await api.post('/auth/logout', flyAskySessionTokenInMemory ? { sessionToken: flyAskySessionTokenInMemory } : {});
     } catch (e) {
       console.warn('Erreur lors de la déconnexion backend', e);
     } finally {
-      // Effacer le JWT en mémoire à la déconnexion (§5 point 5)
+      // Effacer le JWT et le jeton de session en mémoire à la déconnexion (§5 point 5)
       setFlyAskyJwt(null);
+      setFlyAskySessionToken(null);
     }
   },
 
@@ -841,22 +968,14 @@ export const auditService = {
   },
 
   recordLog: async (log: Partial<AuditLog>): Promise<AuditLog> => {
-    const userJson = localStorage.getItem('passbanned_user');
-    let currentUser: any = null;
-    if (userJson) {
-      try {
-        currentUser = JSON.parse(userJson);
-      } catch {}
-    }
-
     const newLog: AuditLog = {
       id: Date.now(),
       action: log.action || 'OPERATION_PERFORMED',
       category: log.category || 'SYSTEM',
       description: log.description || 'Opération effectuée sur la plateforme',
-      userEmail: log.userEmail || currentUser?.email || 'admin@flyasky.com',
-      userName: log.userName || currentUser?.name || 'Administrateur',
-      userRole: log.userRole || currentUser?.role || 'ADMIN',
+      userEmail: log.userEmail || activeUserEmail || 'admin@flyasky.com',
+      userName: log.userName || (activeUserEmail ? activeUserEmail.split('@')[0] : 'Administrateur'),
+      userRole: log.userRole || 'USER',
       targetResource: log.targetResource || 'Système',
       status: log.status || 'SUCCESS',
       ipAddress: log.ipAddress || undefined,

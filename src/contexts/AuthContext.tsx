@@ -72,6 +72,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSessionExpired(false);
       setInactivityWarning(false);
       setActiveUserEmail(null);
+      sessionStorage.removeItem('passbanned_session_locked');
+      sessionStorage.removeItem('passbanned_locked_user');
       localStorage.removeItem('passbanned_user');
       localStorage.removeItem('passbanned_token');
     }
@@ -80,10 +82,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Valide la session active auprès du backend Spring Boot via le cookie HttpOnly sécurisé
   useEffect(() => {
     const checkSession = async () => {
+      // SÉCURITÉ : Si la session a été déconnectée pour inactivité (20 min),
+      // recharger la page (F5) ne doit JAMAIS reconnecter l'utilisateur automatiquement !
+      const isLocked = sessionStorage.getItem('passbanned_session_locked') === 'true';
+      if (isLocked) {
+        const lockedUserJson = sessionStorage.getItem('passbanned_locked_user');
+        if (lockedUserJson) {
+          try {
+            const parsed = JSON.parse(lockedUserJson);
+            setUser(parsed);
+            setActiveUserEmail(parsed.email);
+          } catch {}
+        }
+        setSessionExpired(true);
+        setInactivityWarning(false);
+        setLoading(false);
+        return; // Interdit toute ré-authentification automatique sans mot de passe / OTP
+      }
+
       try {
         const apiUser = await authService.getCurrentUser();
         if (apiUser) {
           const loggedUser: User = {
+            id: apiUser.id.toString(),
             name: apiUser.name,
             email: apiUser.email,
             role: (apiUser.role?.toLowerCase() as 'admin' | 'user') || 'user',
@@ -117,6 +138,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setInactivityWarning(false);
       setSessionExpired(true);
       setFlyAskyJwt(null);
+      sessionStorage.setItem('passbanned_session_locked', 'true');
+      if (user) {
+        sessionStorage.setItem('passbanned_locked_user', JSON.stringify(user));
+      }
     };
 
     // Chaque requête API active prolonge l'inactivité
@@ -170,6 +195,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setInactivityWarning(false);
         setSessionExpired(true);
         setFlyAskyJwt(null);
+        sessionStorage.setItem('passbanned_session_locked', 'true');
+        if (user) {
+          sessionStorage.setItem('passbanned_locked_user', JSON.stringify(user));
+        }
+        // Invalidation définitive de la session et des cookies côté backend Spring Boot
+        authService.expireSession(user?.email).catch(() => {});
         return;
       }
 
@@ -190,7 +221,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user, sessionExpired, inactivityWarning, extendSession]);
 
   const login = async (email: string, password: string): Promise<any> => {
-    email = email.trim().toLowerCase();
     try {
       const credentials: LoginRequest = { email, password };
       const response = await authService.login(credentials);
@@ -210,6 +240,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           createdAt: response.user.createdAt,
           lastLogin: response.user.lastLogin || new Date().toISOString(),
         };
+        sessionStorage.removeItem('passbanned_session_locked');
+        sessionStorage.removeItem('passbanned_locked_user');
         setUser(loggedUser);
         setActiveUserEmail(loggedUser.email);
         setSessionExpired(false);
@@ -233,17 +265,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const verifyFlyAskyOtp = async (challengeId: string, email: string, otp: string): Promise<any> => {
     try {
       const response = await authService.verifyFlyAskyOtp(challengeId, email, otp);
-      console.log('verifyFlyAskyOtp response:', response.user); // Debugging log
       if (response.success && response.user) {
         const loggedUser: User = {
           name: response.user.name,
-          email: response.user.email.trim().toLowerCase(),
+          email: response.user.email,
           role: (response.user.role?.toLowerCase() as 'admin' | 'user') || 'user',
           status: (response.user.status?.toLowerCase() as 'active' | 'inactive') || 'active',
           avatar: response.user.avatarUrl,
           createdAt: response.user.createdAt,
           lastLogin: response.user.lastLogin || new Date().toISOString(),
         };
+        sessionStorage.removeItem('passbanned_session_locked');
+        sessionStorage.removeItem('passbanned_locked_user');
         setUser(loggedUser);
         setActiveUserEmail(loggedUser.email);
         setSessionExpired(false);
@@ -265,7 +298,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const reconnect = async (password: string): Promise<any> => {
     if (!user) return { success: false, error: 'Aucun compte en session' };
     try {
-      const credentials: LoginRequest = { email: user.email.trim().toLowerCase(), password };
+      const credentials: LoginRequest = { email: user.email, password };
       const response = await authService.login(credentials);
 
       if (response.challengeRequired && response.challengeId) {
@@ -281,13 +314,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const loggedUser: User = {
           id: response.user.id.toString(),
           name: response.user.name,
-          email: response.user.email.trim().toLowerCase(),
+          email: response.user.email,
           role: (response.user.role?.toLowerCase() as 'admin' | 'user') || 'user',
           status: (response.user.status?.toLowerCase() as 'active' | 'inactive') || 'active',
           avatar: response.user.avatarUrl,
           createdAt: response.user.createdAt,
           lastLogin: response.user.lastLogin || new Date().toISOString(),
         };
+        sessionStorage.removeItem('passbanned_session_locked');
+        sessionStorage.removeItem('passbanned_locked_user');
         setUser(loggedUser);
         setActiveUserEmail(loggedUser.email);
         setSessionExpired(false);
@@ -306,18 +341,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const reconnectVerifyFlyAskyOtp = async (challengeId: string, otp: string): Promise<any> => {
     if (!user) return { success: false, error: 'Aucun compte en session' };
     try {
-      const response = await authService.verifyFlyAskyOtp(challengeId, user.email.trim().toLowerCase(), otp);
+      const response = await authService.verifyFlyAskyOtp(challengeId, user.email, otp);
       if (response.success && response.user) {
         const loggedUser: User = {
           id: response.user.id.toString(),
           name: response.user.name,
-          email: response.user.email.trim().toLowerCase() ,
+          email: response.user.email,
           role: (response.user.role?.toLowerCase() as 'admin' | 'user') || 'user',
           status: (response.user.status?.toLowerCase() as 'active' | 'inactive') || 'active',
           avatar: response.user.avatarUrl,
           createdAt: response.user.createdAt,
           lastLogin: response.user.lastLogin || new Date().toISOString(),
         };
+        sessionStorage.removeItem('passbanned_session_locked');
+        sessionStorage.removeItem('passbanned_locked_user');
         setUser(loggedUser);
         setActiveUserEmail(loggedUser.email);
         setSessionExpired(false);

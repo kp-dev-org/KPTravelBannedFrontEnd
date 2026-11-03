@@ -90,6 +90,8 @@ export default function SessionExpiredModal() {
   };
 
   const handleSwitchAccount = () => {
+    sessionStorage.removeItem('passbanned_session_locked');
+    sessionStorage.removeItem('passbanned_locked_user');
     setPassword('');
     setOtpCode('');
     setStep('password');

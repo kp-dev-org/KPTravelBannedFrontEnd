@@ -40,8 +40,8 @@ function Navbar({ onMenuClick }: NavbarProps) {
   }
 
   const languages = [
-    { code: 'fr', name: 'Français', flag: '🇫🇷' },
-    { code: 'en', name: 'English', flag: '🇬🇧' },
+    { code: 'fr', name: 'Français', flag: 'https://flagcdn.com/w40/fr.png' },
+    { code: 'en', name: 'English', flag: 'https://flagcdn.com/w40/gb.png' },
   ];
 
   const currentLanguage = languages.find((lang) => lang.code === language);
@@ -65,7 +65,7 @@ function Navbar({ onMenuClick }: NavbarProps) {
                 </div>
                 <div className="flex items-center space-x-2">
                   <span className="text-xl font-black tracking-tight text-gray-900 dark:text-white">
-                    TTravel<span className="text-amber-500">Banned</span>
+                    Travel<span className="text-amber-500">Banned</span>
                   </span>
                 </div>
               </div>
@@ -81,7 +81,7 @@ function Navbar({ onMenuClick }: NavbarProps) {
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Rechercher nom, passeport (ex: TG-8849201)..."
+                  placeholder={t("nav.searchPlaceholder")}
                   className="w-full pl-9 pr-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-xl text-xs placeholder-gray-400 bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:bg-white transition"
                 />
               </div>
@@ -115,8 +115,13 @@ function Navbar({ onMenuClick }: NavbarProps) {
                             : 'text-gray-700 dark:text-gray-300'
                         }`}
                       >
-                        <span className="text-sm">{lang.flag}</span>
+                        <span className="text-sm">{lang.code}</span>
                         <span>{lang.name}</span>
+                        <img
+                          src={lang.flag}
+                          alt={`Drapeau ${lang.name}`}
+                          className="w-5 h-4 object-cover rounded-sm"
+                        />
                       </button>
                     ))}
                   </div>

@@ -11,6 +11,8 @@ import AuditLogs from "./pages/AuditLogs";
 import Profile from "./pages/Profile";
 import Login from "./pages/Login";
 import ErrorPage from "./pages/Errorpage";
+import InactivityWarningModal from "./components/InactivityWarningModal";
+import SessionExpiredModal from "./components/SessionExpiredModal";
 import { LanguageProvider } from './contexts/LanguageContext';
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { DataProvider } from "./contexts/DataContext";
@@ -45,6 +47,8 @@ function AppContent() {
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
+      <InactivityWarningModal />
+      <SessionExpiredModal />
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Navbar onMenuClick={() => setSidebarOpen(true)} />

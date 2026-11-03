@@ -243,7 +243,7 @@ function Dashboard() {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 dark:bg-gray-900 space-y-3">
         <div className="w-12 h-12 border-4 border-yellow-400 border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-xs text-gray-500 font-medium">Chargement des données depuis le backend Spring Boot...</p>
+        <p className="text-xs text-gray-500 font-medium"> {t('dashboard.loading')} </p>
       </div>
     );
   }
