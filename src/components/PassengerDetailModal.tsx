@@ -126,6 +126,10 @@ export default function PassengerDetailModal({
             {/* Top Badges & Close button */}
             <div className="flex items-center justify-between gap-3 mb-4">
               <div className="flex flex-wrap items-center gap-2">
+                <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                  {t('detail.title')}
+                </span>
                 <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${currentStatus.colorClass}`}>
                   {currentStatus.label}
                 </span>
@@ -178,7 +182,7 @@ export default function PassengerDetailModal({
               </div>
 
               {/* Passenger Main Info */}
-              <div className="flex-1 space-y-2">
+              <div className="flex-1 space-y-1.5">
                 <div className="flex flex-wrap items-baseline gap-2">
                   <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
                     {passenger.lastName.toUpperCase()} {passenger.firstName}
@@ -199,6 +203,20 @@ export default function PassengerDetailModal({
                       {copiedPassport ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                     </button>
                   </div>
+
+                  {passenger.passportIssuingCountry && (
+                    <div className="flex items-center gap-1.5 bg-white/10 px-3 py-1 rounded-xl" title="Pays de délivrance du passeport">
+                      <span className="text-slate-400">{t('passengers.passportIssuingCountry') || 'Émetteur'} :</span>
+                      <span className="font-semibold text-slate-100">{passenger.passportIssuingCountry}</span>
+                    </div>
+                  )}
+
+                  {passenger.passportExpiryDate && (
+                    <div className="flex items-center gap-1.5 bg-white/10 px-3 py-1 rounded-xl" title="Date d'expiration du passeport">
+                      <span className="text-slate-400">{t('passengers.passportExpiryDate') || 'Expire le'} :</span>
+                      <span className="font-mono font-semibold text-slate-100">{passenger.passportExpiryDate}</span>
+                    </div>
+                  )}
 
                   <div className="flex items-center gap-1.5 bg-white/10 px-3 py-1 rounded-xl">
                     <Globe className="w-3.5 h-3.5 text-amber-400" />
@@ -312,6 +330,20 @@ export default function PassengerDetailModal({
                     <span className="text-gray-500 dark:text-gray-400">{t('detail.firstNames')}</span>
                     <span className="font-bold text-gray-900 dark:text-white">
                       {passenger.firstName}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between py-1 border-b border-gray-150 dark:border-gray-800">
+                    <span className="text-gray-500 dark:text-gray-400">{t('passengers.passportIssuingCountry') || 'Pays de délivrance'}</span>
+                    <span className="font-semibold text-gray-900 dark:text-white">
+                      {passenger.passportIssuingCountry || t('detail.unspecified')}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between py-1 border-b border-gray-150 dark:border-gray-800">
+                    <span className="text-gray-500 dark:text-gray-400">{t('passengers.passportExpiryDate') || 'Expiration passeport'}</span>
+                    <span className="font-mono text-gray-900 dark:text-white">
+                      {passenger.passportExpiryDate || t('detail.unspecified')}
                     </span>
                   </div>
 

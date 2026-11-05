@@ -1,15 +1,23 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { authService, LoginRequest, userService, setActiveUserEmail, setFlyAskyJwt } from '../services/Api';
+import { useLanguage } from './LanguageContext';
 
 export interface User {
   id?: string;
   name: string;
   email: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'user' | 'super-admin';
   status: 'active' | 'inactive';
   avatar?: string;
   createdAt: string;
   lastLogin: string;
+}
+
+export function normalizeUserRole(rawRole?: string): 'admin' | 'user' | 'super-admin' {
+  const r = (rawRole || '').toLowerCase().replace(/_/g, '-');
+  if (r === 'super-admin') return 'super-admin';
+  if (r === 'admin') return 'admin';
+  return 'user';
 }
 
 interface AuthContextType {
@@ -17,6 +25,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<any>;
   logout: () => void;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
   loading: boolean;
   verifyFlyAskyOtp: (challengeId: string, email: string, otp: string) => Promise<any>;
   resendFlyAskyOtp: (challengeId: string) => Promise<any>;
@@ -34,9 +43,9 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Constantes de sécurité d'inactivité (20 minutes configurées selon la demande utilisateur)
-const INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes = 1 200 000 ms
-const INACTIVITY_WARNING_MS = 19 * 60 * 1000; // Déclenchement de l'avertissement à 19 minutes (reste 60 secondes)
-const KEEP_ALIVE_INTERVAL_MS = 3 * 60 * 1000; // Rafraîchissement glissant du backend toutes les 3 minutes si l'utilisateur est actif
+const INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000; 
+const INACTIVITY_WARNING_MS = 19 * 60 * 1000; 
+const KEEP_ALIVE_INTERVAL_MS = 3 * 60 * 1000; 
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -45,13 +54,62 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [inactivityWarning, setInactivityWarning] = useState(false);
   const [inactivityRemainingSeconds, setInactivityRemainingSeconds] = useState(60);
   const [sessionExpired, setSessionExpired] = useState(false);
+
   const lastActivityRef = useRef<number>(Date.now());
   const lastPingRef = useRef<number>(Date.now());
+  const userRef = useRef<User | null>(user);
+  const { t } = useLanguage();
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  // Helper pour lire l'horodatage d'activité partagé (synchronisé entre tous les onglets)
+  const getLastActivity = (): number => {
+    try {
+      const stored = localStorage.getItem('passbanned_last_activity');
+      if (stored) {
+        const parsed = parseInt(stored, 10);
+        if (!isNaN(parsed) && parsed > 0) return parsed;
+      }
+    } catch {}
+    return lastActivityRef.current;
+  };
+
+  // Helper pour enregistrer l'activité de manière synchrone
+  const updateLastActivity = (timestamp: number = Date.now()) => {
+    lastActivityRef.current = timestamp;
+    try {
+      localStorage.setItem('passbanned_last_activity', String(timestamp));
+    } catch {}
+  };
+
+  // Verrouillage officiel de session suite à 20 minutes d'inactivité
+  // Référence stable sans dépendance cyclique sur user
+  const triggerSessionExpired = useCallback(() => {
+    setInactivityWarning(false);
+    setSessionExpired(true);
+    setFlyAskyJwt(null);
+    try {
+      localStorage.setItem('passbanned_session_locked', 'true');
+      sessionStorage.setItem('passbanned_session_locked', 'true');
+      const currentUser = userRef.current;
+      if (currentUser) {
+        const serialized = JSON.stringify(currentUser);
+        localStorage.setItem('passbanned_locked_user', serialized);
+        sessionStorage.setItem('passbanned_locked_user', serialized);
+      }
+    } catch {}
+    setInactivityMessage(
+      t("session_expired")
+    );
+    authService.expireSession(userRef.current?.email).catch(() => {});
+  }, []);
 
   // Prolonger la session et réinitialiser le chronomètre d'inactivité
   const extendSession = useCallback(() => {
     const now = Date.now();
-    lastActivityRef.current = now;
+    updateLastActivity(now);
     lastPingRef.current = now;
     setInactivityWarning(false);
     setInactivityRemainingSeconds(60);
@@ -72,21 +130,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSessionExpired(false);
       setInactivityWarning(false);
       setActiveUserEmail(null);
-      sessionStorage.removeItem('passbanned_session_locked');
-      sessionStorage.removeItem('passbanned_locked_user');
-      localStorage.removeItem('passbanned_user');
-      localStorage.removeItem('passbanned_token');
+      try {
+        localStorage.removeItem('passbanned_session_locked');
+        localStorage.removeItem('passbanned_locked_user');
+        localStorage.removeItem('passbanned_last_activity');
+        sessionStorage.removeItem('passbanned_session_locked');
+        sessionStorage.removeItem('passbanned_locked_user');
+        localStorage.removeItem('passbanned_user');
+        localStorage.removeItem('passbanned_token');
+      } catch {}
     }
   }, []);
 
-  // Valide la session active auprès du backend Spring Boot via le cookie HttpOnly sécurisé
+  // Valide la session active auprès du backend Spring Boot une seule fois au chargement initial
   useEffect(() => {
     const checkSession = async () => {
-      // SÉCURITÉ : Si la session a été déconnectée pour inactivité (20 min),
+      // SÉCURITÉ : Vérifier si l'inactivité a dépassé 20 minutes (ex: après veille prolongée ou réouverture)
+      const storedLast = localStorage.getItem('passbanned_last_activity');
+      if (storedLast) {
+        const last = parseInt(storedLast, 10);
+        if (!isNaN(last) && Date.now() - last >= INACTIVITY_TIMEOUT_MS) {
+          triggerSessionExpired();
+          setLoading(false);
+          return;
+        }
+      }
+
+      // SÉCURITÉ : Si la session a été verrouillée (20 min),
       // recharger la page (F5) ne doit JAMAIS reconnecter l'utilisateur automatiquement !
-      const isLocked = sessionStorage.getItem('passbanned_session_locked') === 'true';
+      const isLocked =
+        localStorage.getItem('passbanned_session_locked') === 'true' ||
+        sessionStorage.getItem('passbanned_session_locked') === 'true';
+
       if (isLocked) {
-        const lockedUserJson = sessionStorage.getItem('passbanned_locked_user');
+        const lockedUserJson =
+          localStorage.getItem('passbanned_locked_user') ||
+          sessionStorage.getItem('passbanned_locked_user');
         if (lockedUserJson) {
           try {
             const parsed = JSON.parse(lockedUserJson);
@@ -107,7 +186,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             id: apiUser.id.toString(),
             name: apiUser.name,
             email: apiUser.email,
-            role: (apiUser.role?.toLowerCase() as 'admin' | 'user') || 'user',
+            role: normalizeUserRole(apiUser.role),
             status: (apiUser.status?.toLowerCase() as 'active' | 'inactive') || 'active',
             avatar: apiUser.avatarUrl,
             createdAt: apiUser.createdAt,
@@ -115,8 +194,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           };
           setUser(loggedUser);
           setActiveUserEmail(loggedUser.email);
-          lastActivityRef.current = Date.now();
           lastPingRef.current = Date.now();
+
+          // Initialiser l'horodatage uniquement si aucun horodatage n'est déjà en mémoire
+          if (!localStorage.getItem('passbanned_last_activity')) {
+            updateLastActivity(Date.now());
+          }
 
           // Restauration immédiate du JWT FlyAsky en mémoire volatile via GET /token (§5)
           authService.refreshFlyAskyToken(loggedUser.email).catch(() => {});
@@ -131,76 +214,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
       }
     };
+
     checkSession();
 
     // Quand le backend signale une session expirée : afficher la mini page de survol
     window.handleSessionExpired = () => {
-      setInactivityWarning(false);
-      setSessionExpired(true);
-      setFlyAskyJwt(null);
-      sessionStorage.setItem('passbanned_session_locked', 'true');
-      if (user) {
-        sessionStorage.setItem('passbanned_locked_user', JSON.stringify(user));
-      }
-    };
-
-    // Chaque requête API active prolonge l'inactivité
-    window.notifyUserActivity = () => {
-      if (!sessionExpired) {
-        lastActivityRef.current = Date.now();
-      }
+      triggerSessionExpired();
     };
 
     return () => {
       window.handleSessionExpired = undefined;
       window.notifyUserActivity = undefined;
     };
-  }, [sessionExpired]);
+  }, []); // Exécuté une seule fois au montage
 
-  // Détecteur d'activité utilisateur (souris, clavier, tactile, défilement)
+  // Détecteur d'activité utilisateur (clavier, clics, tactile, défilement, déplacements réels)
   useEffect(() => {
     if (!user || sessionExpired) return;
 
-    const handleUserInteraction = () => {
+    const checkInactivity = () => {
       const now = Date.now();
-      // Si l'alerte d'inactivité est affichée, toute interaction la prolonge
-      if (inactivityWarning) {
-        extendSession();
-        return;
-      }
+      const last = getLastActivity();
+      const idleMs = now - last;
 
-      // Mise à jour de l'horodatage d'activité (throttlé à 2 secondes)
-      if (now - lastActivityRef.current > 2000) {
-        lastActivityRef.current = now;
-
-        // Envoi d'un battement de cœur (heartbeat) au backend toutes les 3 minutes
-        // pour maintenir la fenêtre glissante d'inactivité de 20 minutes synchronisée
-        if (now - lastPingRef.current > KEEP_ALIVE_INTERVAL_MS) {
-          lastPingRef.current = now;
-          authService.validateSession().catch(() => {});
-        }
-      }
-    };
-
-    const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
-    events.forEach((ev) => window.addEventListener(ev, handleUserInteraction, { passive: true }));
-
-    // Vérification périodique de l'inactivité chaque seconde
-    const timer = setInterval(() => {
-      const now = Date.now();
-      const idleMs = now - lastActivityRef.current;
-
-      // Cas 1 : Inactivité >= 20 minutes (1200 secondes) -> Affichage de la mini page de survol
+      // Cas 1 : Inactivité >= 20 minutes (1200 secondes) -> Verrouillage de la session
       if (idleMs >= INACTIVITY_TIMEOUT_MS) {
-        setInactivityWarning(false);
-        setSessionExpired(true);
-        setFlyAskyJwt(null);
-        sessionStorage.setItem('passbanned_session_locked', 'true');
-        if (user) {
-          sessionStorage.setItem('passbanned_locked_user', JSON.stringify(user));
-        }
-        // Invalidation définitive de la session et des cookies côté backend Spring Boot
-        authService.expireSession(user?.email).catch(() => {});
+        triggerSessionExpired();
         return;
       }
 
@@ -212,17 +251,85 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setInactivityWarning(false);
       }
-    }, 1000);
+    };
+
+    const handleUserInteraction = () => {
+      const now = Date.now();
+      const last = getLastActivity();
+      const idleMs = now - last;
+
+      // SÉCURITÉ CRITIQUE : Si 20 min d'inactivité sont déjà atteintes,
+      // ce clic NE DOIT PAS prolonger la session ! Elle doit verrouiller immédiatement.
+      if (idleMs >= INACTIVITY_TIMEOUT_MS) {
+        triggerSessionExpired();
+        return;
+      }
+
+      // Si l'avertissement de 60s est affiché et que l'utilisateur clique, prolonger la session
+      if (inactivityWarning) {
+        extendSession();
+        return;
+      }
+
+      // Mise à jour de l'horodatage d'activité sur clic de souris uniquement
+      updateLastActivity(now);
+
+      // Envoi d'un battement de cœur (heartbeat) au backend si nécessaire
+      if (now - lastPingRef.current > KEEP_ALIVE_INTERVAL_MS) {
+        lastPingRef.current = now;
+        authService.validateSession().catch(() => {});
+      }
+    };
+
+    // Synchronisation multi-onglets en temps réel via l'événement storage
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'passbanned_last_activity' && e.newValue) {
+        const newTime = parseInt(e.newValue, 10);
+        if (!isNaN(newTime)) {
+          lastActivityRef.current = newTime;
+          setInactivityWarning(false);
+        }
+      }
+      if (e.key === 'passbanned_session_locked') {
+        if (e.newValue === 'true') {
+          setInactivityWarning(false);
+          setSessionExpired(true);
+          setFlyAskyJwt(null);
+        } else {
+          setSessionExpired(false);
+        }
+      }
+    };
+
+    // Vérification immédiate lors du retour sur l'onglet ou du réveil de l'ordinateur
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        checkInactivity();
+      }
+    };
+
+    const events = ['click'];
+    events.forEach((ev) => window.addEventListener(ev, handleUserInteraction, { passive: true }));
+    window.addEventListener('storage', handleStorageChange);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
+    // Vérification périodique de l'inactivité chaque seconde
+    const timer = setInterval(checkInactivity, 1000);
 
     return () => {
       events.forEach((ev) => window.removeEventListener(ev, handleUserInteraction));
+      window.removeEventListener('storage', handleStorageChange);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
       clearInterval(timer);
     };
   }, [user, sessionExpired, inactivityWarning, extendSession]);
 
   const login = async (email: string, password: string): Promise<any> => {
     try {
-      const credentials: LoginRequest = { email, password };
+      const cleanEmail = (email || '').trim().toLowerCase();
+      const credentials: LoginRequest = { email: cleanEmail, password };
       const response = await authService.login(credentials);
 
       if (response.challengeRequired || response.mfaRequired || response.mfaSetup) {
@@ -234,20 +341,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           id: response.user.id.toString(),
           name: response.user.name,
           email: response.user.email,
-          role: (response.user.role?.toLowerCase() as 'admin' | 'user') || 'user',
+          role: normalizeUserRole(response.user.role),
           status: (response.user.status?.toLowerCase() as 'active' | 'inactive') || 'active',
           avatar: response.user.avatarUrl,
           createdAt: response.user.createdAt,
           lastLogin: response.user.lastLogin || new Date().toISOString(),
         };
-        sessionStorage.removeItem('passbanned_session_locked');
-        sessionStorage.removeItem('passbanned_locked_user');
+        try {
+          localStorage.removeItem('passbanned_session_locked');
+          localStorage.removeItem('passbanned_locked_user');
+          sessionStorage.removeItem('passbanned_session_locked');
+          sessionStorage.removeItem('passbanned_locked_user');
+        } catch {}
         setUser(loggedUser);
         setActiveUserEmail(loggedUser.email);
         setSessionExpired(false);
         setInactivityMessage(null);
         setInactivityWarning(false);
-        lastActivityRef.current = Date.now();
+        updateLastActivity(Date.now());
         lastPingRef.current = Date.now();
         return { success: true };
       }
@@ -269,20 +380,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const loggedUser: User = {
           name: response.user.name,
           email: response.user.email,
-          role: (response.user.role?.toLowerCase() as 'admin' | 'user') || 'user',
+          role: normalizeUserRole(response.user.role),
           status: (response.user.status?.toLowerCase() as 'active' | 'inactive') || 'active',
           avatar: response.user.avatarUrl,
           createdAt: response.user.createdAt,
           lastLogin: response.user.lastLogin || new Date().toISOString(),
         };
-        sessionStorage.removeItem('passbanned_session_locked');
-        sessionStorage.removeItem('passbanned_locked_user');
+        try {
+          localStorage.removeItem('passbanned_session_locked');
+          localStorage.removeItem('passbanned_locked_user');
+          sessionStorage.removeItem('passbanned_session_locked');
+          sessionStorage.removeItem('passbanned_locked_user');
+        } catch {}
         setUser(loggedUser);
         setActiveUserEmail(loggedUser.email);
         setSessionExpired(false);
         setInactivityMessage(null);
         setInactivityWarning(false);
-        lastActivityRef.current = Date.now();
+        updateLastActivity(Date.now());
         lastPingRef.current = Date.now();
         return { success: true, message: response.message };
       }
@@ -298,7 +413,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const reconnect = async (password: string): Promise<any> => {
     if (!user) return { success: false, error: 'Aucun compte en session' };
     try {
-      const credentials: LoginRequest = { email: user.email, password };
+      const cleanEmail = (user.email || '').trim().toLowerCase();
+      const credentials: LoginRequest = { email: cleanEmail, password };
       const response = await authService.login(credentials);
 
       if (response.challengeRequired && response.challengeId) {
@@ -312,22 +428,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (response.success && response.user) {
         const loggedUser: User = {
-          id: response.user.id.toString(),
           name: response.user.name,
           email: response.user.email,
-          role: (response.user.role?.toLowerCase() as 'admin' | 'user') || 'user',
+          role: normalizeUserRole(response.user.role),
           status: (response.user.status?.toLowerCase() as 'active' | 'inactive') || 'active',
           avatar: response.user.avatarUrl,
           createdAt: response.user.createdAt,
           lastLogin: response.user.lastLogin || new Date().toISOString(),
         };
-        sessionStorage.removeItem('passbanned_session_locked');
-        sessionStorage.removeItem('passbanned_locked_user');
+        try {
+          localStorage.removeItem('passbanned_session_locked');
+          localStorage.removeItem('passbanned_locked_user');
+          sessionStorage.removeItem('passbanned_session_locked');
+          sessionStorage.removeItem('passbanned_locked_user');
+        } catch {}
         setUser(loggedUser);
         setActiveUserEmail(loggedUser.email);
         setSessionExpired(false);
         setInactivityWarning(false);
-        lastActivityRef.current = Date.now();
+        updateLastActivity(Date.now());
         lastPingRef.current = Date.now();
         return { success: true };
       }
@@ -344,22 +463,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const response = await authService.verifyFlyAskyOtp(challengeId, user.email, otp);
       if (response.success && response.user) {
         const loggedUser: User = {
-          id: response.user.id.toString(),
           name: response.user.name,
           email: response.user.email,
-          role: (response.user.role?.toLowerCase() as 'admin' | 'user') || 'user',
+          role: normalizeUserRole(response.user.role),
           status: (response.user.status?.toLowerCase() as 'active' | 'inactive') || 'active',
           avatar: response.user.avatarUrl,
           createdAt: response.user.createdAt,
           lastLogin: response.user.lastLogin || new Date().toISOString(),
         };
-        sessionStorage.removeItem('passbanned_session_locked');
-        sessionStorage.removeItem('passbanned_locked_user');
+        try {
+          localStorage.removeItem('passbanned_session_locked');
+          localStorage.removeItem('passbanned_locked_user');
+          sessionStorage.removeItem('passbanned_session_locked');
+          sessionStorage.removeItem('passbanned_locked_user');
+        } catch {}
         setUser(loggedUser);
         setActiveUserEmail(loggedUser.email);
         setSessionExpired(false);
         setInactivityWarning(false);
-        lastActivityRef.current = Date.now();
+        updateLastActivity(Date.now());
         lastPingRef.current = Date.now();
         return { success: true, message: response.message };
       }
@@ -388,7 +510,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const isAdmin = user?.role === 'admin';
+  const isSuperAdmin = user?.role === 'super-admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'super-admin';
 
   return (
     <AuthContext.Provider
@@ -397,6 +520,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         isAdmin,
+        isSuperAdmin,
         loading,
         verifyFlyAskyOtp,
         resendFlyAskyOtp,

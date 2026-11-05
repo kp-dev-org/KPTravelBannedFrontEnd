@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Lock, ShieldAlert, KeyRound, Eye, EyeOff, ArrowRight, LogOut, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useLanguage } from '../contexts/LanguageContext';
 
 export default function SessionExpiredModal() {
   const {
@@ -11,6 +12,8 @@ export default function SessionExpiredModal() {
     resendFlyAskyOtp,
     logout,
   } = useAuth();
+
+  const { t } = useLanguage();
 
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -89,9 +92,13 @@ export default function SessionExpiredModal() {
     }
   };
 
-  const handleSwitchAccount = () => {
-    sessionStorage.removeItem('passbanned_session_locked');
-    sessionStorage.removeItem('passbanned_locked_user');
+   const handleSwitchAccount = () => {
+    try {
+      localStorage.removeItem('passbanned_session_locked');
+      localStorage.removeItem('passbanned_locked_user');
+      sessionStorage.removeItem('passbanned_session_locked');
+      sessionStorage.removeItem('passbanned_locked_user');
+    } catch {}
     setPassword('');
     setOtpCode('');
     setStep('password');
@@ -105,19 +112,6 @@ export default function SessionExpiredModal() {
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fadeIn"
     >
       <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-2xl border border-amber-500/30 max-w-md w-full overflow-hidden text-gray-900 dark:text-gray-100 animate-scaleIn">
-        {/* En-tête ASKY */}
-        <div className="px-6 py-4 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 text-gray-950 flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <ShieldAlert className="w-5 h-5 text-gray-950" />
-            <span className="text-xs font-bold uppercase tracking-wider">
-              Sûreté des Vols • ASKY Airlines
-            </span>
-          </div>
-          <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-black/15 font-semibold">
-            20 min inactivité
-          </span>
-        </div>
-
         <div className="p-6 space-y-5">
           {/* Icône de cadenas */}
           <div className="text-center space-y-2">
@@ -125,12 +119,8 @@ export default function SessionExpiredModal() {
               <Lock className="w-8 h-8 animate-pulse" />
             </div>
             <h2 className="text-xl font-black tracking-tight text-gray-900 dark:text-white">
-              Session expirée
+              {t("sessionExpired.title")}
             </h2>
-            <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed max-w-sm mx-auto">
-              Aucune activité détectée pendant <strong className="text-amber-600 dark:text-amber-400">20 minutes</strong>.
-              Par mesure de sûreté, votre session a été verrouillée. Veuillez vous reconnecter pour reprendre vos opérations.
-            </p>
           </div>
 
           {/* Carte récapitulative de l'utilisateur connecté */}
@@ -169,14 +159,14 @@ export default function SessionExpiredModal() {
             <form onSubmit={handlePasswordSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300 mb-1.5 text-left">
-                  Mot de passe de session
+                  {t("sessionExpired.passwordLabel")}
                 </label>
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Entrez votre mot de passe"
+                    placeholder={t("sessionExpired.passwordPlaceholder")}
                     autoFocus
                     disabled={loading}
                     className="w-full px-3.5 py-2.5 pr-10 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -200,11 +190,11 @@ export default function SessionExpiredModal() {
                   {loading ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Reconnexion...</span>
+                      <span>{t("sessionExpired.reconnecting")}</span>
                     </>
                   ) : (
                     <>
-                      <span>Se reconnecter</span>
+                      <span>{t("sessionExpired.reconnect")}</span>
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}
@@ -214,10 +204,10 @@ export default function SessionExpiredModal() {
                   onClick={handleSwitchAccount}
                   disabled={loading}
                   className="px-3.5 py-2.5 border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-xl text-xs font-semibold flex items-center justify-center space-x-1.5 transition cursor-pointer"
-                  title="Changer d'utilisateur"
+                  title={t("sessionExpired.switchAccountTitle")}
                 >
                   <LogOut className="w-3.5 h-3.5" />
-                  <span>Changer de compte</span>
+                  <span>{t("sessionExpired.switchAccount")}</span>
                 </button>
               </div>
             </form>
@@ -229,21 +219,21 @@ export default function SessionExpiredModal() {
               <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700 rounded-xl p-3 text-xs text-amber-900 dark:text-amber-200 text-left">
                 <div className="flex items-center space-x-1.5 font-bold mb-1">
                   <KeyRound className="w-4 h-4 text-amber-600" />
-                  <span>Validation Double Facteur FlyAsky</span>
+                  <span>{t("sessionExpired.otpTitle")}</span>
                 </div>
                 <p>{otpNotice}</p>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300 mb-1.5 text-left">
-                  Code OTP à 6 chiffres
+                  {t("sessionExpired.otpLabel")}
                 </label>
                 <input
                   type="text"
                   maxLength={6}
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                  placeholder="000000"
+                  placeholder={t("sessionExpired.otpPlaceholder")}  
                   autoFocus
                   disabled={loading}
                   className="w-full text-center text-2xl tracking-[0.4em] font-mono font-bold py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -264,7 +254,7 @@ export default function SessionExpiredModal() {
                   onClick={() => { setStep('password'); setError(''); }}
                   className="text-gray-500 hover:text-gray-700 dark:text-gray-400 cursor-pointer"
                 >
-                  ← Retour mot de passe
+                  ← {t("sessionExpired.backToPassword")}
                 </button>
               </div>
 
@@ -276,11 +266,11 @@ export default function SessionExpiredModal() {
                 {loading ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Validation OTP...</span>
+                    <span>{t("sessionExpired.validatingOtp")}</span>
                   </>
                 ) : (
                   <>
-                    <span>Valider et reprendre</span>
+                    <span>{t("sessionExpired.validateAndContinue")}</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}

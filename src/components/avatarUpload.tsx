@@ -59,7 +59,7 @@ function AvatarUpload({ currentAvatar, userName, onAvatarChange, disabled = fals
       setPreviewUrl(null);
     } catch (error) {
       console.error('Error while uploading:', error);
-      alert(t('profile.uploadError'));
+      alert('Error uploading image');
     } finally {
       setIsUploading(false);
     }
@@ -109,33 +109,33 @@ function AvatarUpload({ currentAvatar, userName, onAvatarChange, disabled = fals
 
       {/* Modal de confirmation */}
       {showConfirm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl max-w-md w-full">
             <div className="p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                {selectedFile ? 'Confirmer le changement d\'avatar' : 'Changer l\'avatar'}
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">
+                {selectedFile ? t('avatar.confirmTitle') : t('avatar.changeTitle')}
               </h3>
               
               {!selectedFile ? (
                 <div className="text-center">
-                  <p className="text-gray-600 mb-6">
+                  <p className="text-gray-600 dark:text-gray-300 mb-6">
                     {t('avatar.questionajout')}<br />
-                    Formats: JPG, PNG (max 5MB)
+                    <span className="text-xs text-gray-400">{t('avatar.formatsHint')}</span>
                   </p>
                   <div className="flex justify-center space-x-3">
                     <button
                       type="button"
                       onClick={openFileDialog}
-                      className="px-4 py-2 bg-asky-brown-600 text-white rounded-lg hover:bg-asky-brown-700 transition-colors flex items-center space-x-2"
+                      className="px-4 py-2 bg-asky-brown-600 hover:bg-asky-brown-700 text-white rounded-lg transition-colors flex items-center space-x-2 cursor-pointer shadow-sm"
                     >
                       <Upload className="h-4 w-4" />
-                      <span>Choisir une image</span>
+                      <span>{t('avatar.chooseImage')}</span>
                     </button>
                     <button
                       onClick={handleCancel}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                      className="px-4 py-2 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors cursor-pointer"
                     >
-                      Annuler
+                      {t('common.cancel')}
                     </button>
                   </div>
                 </div>
@@ -145,33 +145,33 @@ function AvatarUpload({ currentAvatar, userName, onAvatarChange, disabled = fals
                     <img
                       src={previewUrl || ''}
                       alt="Aperçu"
-                      className="h-32 w-32 rounded-full object-cover mx-auto border-2 border-gray-200"
+                      className="h-32 w-32 rounded-full object-cover mx-auto border-2 border-gray-200 dark:border-gray-700"
                     />
                   </div>
-                  <p className="text-gray-600 mb-6">
-                    Confirmer l'upload de cette image ?
+                  <p className="text-gray-700 dark:text-gray-300 mb-6">
+                    {t('avatar.confirmUploadPrompt')}
                   </p>
                   
                   <div className="flex justify-center space-x-3">
                     <button
                       onClick={handleConfirmUpload}
                       disabled={isUploading}
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2 disabled:opacity-50"
+                      className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors flex items-center space-x-2 disabled:opacity-50 cursor-pointer shadow-sm"
                     >
                       <Check className="h-4 w-4" />
-                      <span>{isUploading ? 'Upload...' : 'Confirmer'}</span>
+                      <span>{isUploading ? t('avatar.uploading') : t('avatar.confirm')}</span>
                     </button>
                     <button
                       onClick={openFileDialog}
                       disabled={isUploading}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                      className="px-4 py-2 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors disabled:opacity-50 cursor-pointer"
                     >
-                      Changer
+                      {t('avatar.change')}
                     </button>
                     <button
                       onClick={handleCancel}
                       disabled={isUploading}
-                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                      className="px-4 py-2 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors disabled:opacity-50 cursor-pointer"
                     >
                       <X className="h-4 w-4" />
                     </button>

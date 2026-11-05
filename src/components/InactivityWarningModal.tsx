@@ -1,8 +1,12 @@
 import React from 'react';
 import { Clock, ShieldAlert, ArrowRight, LogOut } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useLanguage } from '../contexts/LanguageContext';
+
+
 
 export default function InactivityWarningModal() {
+  const { t } = useLanguage();
   const { inactivityWarning, inactivityRemainingSeconds, extendSession, logout } = useAuth();
 
   if (!inactivityWarning) return null;
@@ -21,15 +25,11 @@ export default function InactivityWarningModal() {
         </div>
 
         <div className="space-y-2">
-          <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 text-xs font-semibold">
-            <ShieldAlert className="w-3.5 h-3.5" />
-            <span>Sûreté Aéroportuaire ASKY</span>
-          </div>
           <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-            Session inactive : révocation imminente
+            {t('inactivityWarning.title')}
           </h3>
           <p className="text-sm text-gray-600 dark:text-gray-300">
-            Vous êtes inactif depuis plus de 14 minutes. Votre session sera automatiquement révoquée dans :
+            {t('inactivityWarning.message')}
           </p>
         </div>
 
@@ -45,7 +45,7 @@ export default function InactivityWarningModal() {
             />
           </div>
           <p className="text-xs text-gray-400 dark:text-gray-500">
-            Délai d'inactivité maximal autorisé : 15 minutes
+            {t('inactivityWarning.description')}
           </p>
         </div>
 
@@ -56,7 +56,7 @@ export default function InactivityWarningModal() {
             onClick={extendSession}
             className="flex-1 flex items-center justify-center space-x-2 px-4 py-2.5 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-semibold rounded-xl text-sm transition shadow-sm hover:shadow cursor-pointer"
           >
-            <span>Prolonger ma session</span>
+            <span>{t('inactivityWarning.extendSession')}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
           <button
@@ -65,7 +65,7 @@ export default function InactivityWarningModal() {
             className="flex items-center justify-center space-x-2 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-medium rounded-xl text-sm transition cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
-            <span>Se déconnecter</span>
+            <span>{t('inactivityWarning.logout')}</span>
           </button>
         </div>
       </div>

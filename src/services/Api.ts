@@ -131,6 +131,19 @@ export function setFlyAskyJwt(token: string | null): void {
     }
 
     renewalTimer = setTimeout(() => {
+      // SÉCURITÉ : Si la session est verrouillée ou si l'utilisateur est inactif (> 15 min),
+      // ne JAMAIS renouveler automatiquement le token pour ne pas masquer l'inactivité réelle
+      const isLocked =
+        localStorage.getItem('passbanned_session_locked') === 'true' ||
+        sessionStorage.getItem('passbanned_session_locked') === 'true';
+      const lastActivityStr = localStorage.getItem('passbanned_last_activity');
+      const lastActivity = lastActivityStr ? parseInt(lastActivityStr, 10) : Date.now();
+      const idleMs = Date.now() - lastActivity;
+
+      if (isLocked || idleMs >= 15 * 60 * 1000) {
+        return;
+      }
+
       authService.refreshFlyAskyToken().catch(() => {});
     }, delayMs);
   }
@@ -150,15 +163,23 @@ const api = axios.create({
   },
 });
 
+// Helper pour identifier les requêtes d'arrière-plan système
+const isBackgroundAuthRoute = (url?: string): boolean => {
+  if (!url) return false;
+  return (
+    url.includes('/auth/flyasky/refresh-token') ||
+    url.includes('/auth/flyasky/token') ||
+    url.includes('/auth/expire-session') ||
+    url.includes('/auth/login') ||
+    url.includes('/auth/logout')
+  );
+};
+
 // Intercepteur de requête :
 // - Vérifie pro-activement si le JWT expire dans moins d'une minute (§5 point 3)
 // - Injecte le JWT en mémoire dans Authorization: Bearer <JWT>
 api.interceptors.request.use(async (config) => {
-  const isAuthRoute =
-    config.url?.includes('/auth/flyasky/refresh-token') ||
-    config.url?.includes('/auth/flyasky/token') ||
-    config.url?.includes('/auth/login') ||
-    config.url?.includes('/auth/logout');
+  const isAuthRoute = isBackgroundAuthRoute(config.url);
 
   // Si le JWT expire dans moins d'une minute (< 60s), renouveler pro-activement par GET /token avant envoi
   if (flyAskyJwtInMemory && !isAuthRoute) {
@@ -167,9 +188,6 @@ api.interceptors.request.use(async (config) => {
         const freshJwt = await authService.refreshFlyAskyToken();
         if (freshJwt) {
           config.headers.Authorization = `Bearer ${freshJwt}`;
-          if (typeof window.notifyUserActivity === 'function') {
-            window.notifyUserActivity();
-          }
           return config;
         }
       } catch (err) {
@@ -179,32 +197,27 @@ api.interceptors.request.use(async (config) => {
     config.headers.Authorization = `Bearer ${flyAskyJwtInMemory}`;
   }
 
-  if (typeof window.notifyUserActivity === 'function') {
-    window.notifyUserActivity();
-  }
   return config;
 });
 
 // ----------- Intercepteurs de réponses -----------
 api.interceptors.response.use(
   (response) => {
-    if (typeof window.notifyUserActivity === 'function') {
-      window.notifyUserActivity();
-    }
     return response;
   },
   async (error) => {
     const originalRequest = error.config;
 
     // Spécification FlyAsky §5 (Point 4) : sur 401 de votre API : renouveler une fois, puis retenter
-    const isAuthPath =
-      originalRequest?.url?.includes('/auth/login') ||
-      originalRequest?.url?.includes('/auth/flyasky/verify') ||
-      originalRequest?.url?.includes('/auth/flyasky/refresh-token') ||
-      originalRequest?.url?.includes('/auth/flyasky/token');
+    const isAuthPath = isBackgroundAuthRoute(originalRequest?.url) ||
+      originalRequest?.url?.includes('/auth/flyasky/verify');
 
     // SÉCURITÉ : Si la session est verrouillée suite à inactivité (20 min), ne JAMAIS renouveler en douce
-    if (sessionStorage.getItem('passbanned_session_locked') === 'true') {
+    const isLocked =
+      localStorage.getItem('passbanned_session_locked') === 'true' ||
+      sessionStorage.getItem('passbanned_session_locked') === 'true';
+
+    if (isLocked) {
       if (typeof window.handleSessionExpired === 'function') {
         window.handleSessionExpired();
       }
@@ -262,7 +275,7 @@ export interface ApiUser {
   id: number;
   name: string;
   email: string;
-  role: 'USER' | 'ADMIN';
+  role: 'USER' | 'ADMIN' | 'SUPER_ADMIN';
   status: 'ACTIVE' | 'INACTIVE';
   avatarUrl?: string;
   lastLogin: string;
@@ -275,7 +288,7 @@ export interface CreateUserRequest {
   name: string;
   email: string;
   password: string;
-  role: 'USER' | 'ADMIN';
+  role: 'USER' | 'ADMIN' | 'SUPER_ADMIN';
   status: 'ACTIVE' | 'INACTIVE';
   avatarUrl?: string;
   mfaEnabled: boolean;
@@ -288,6 +301,8 @@ export interface ApiPassenger {
   email: string;
   phone: string;
   passportNumber: string;
+  passportExpiryDate?: string;
+  passportIssuingCountry?: string;
   nationality: string;
   dateOfBirth: string;
   banReason: string;
@@ -310,6 +325,8 @@ export interface CreatePassengerRequest {
   email: string;
   phone: string;
   passportNumber: string;
+  passportExpiryDate?: string;
+  passportIssuingCountry?: string;
   nationality: string;
   dateOfBirth: string;
   banReason: string;
@@ -397,37 +414,49 @@ export async function pingBackend(): Promise<{ online: boolean; message: string;
 
 export const authService = {
   login: async (credentials: LoginRequest): Promise<any> => {
-    const response = await api.post('/auth/login', credentials);
-    const data = response.data;
+    try {
+      const cleanEmail = (credentials.email || '').trim().toLowerCase();
+      const response = await api.post('/auth/login', { ...credentials, email: cleanEmail });
+      const data = response.data;
 
-    // Étape 2 : Challenge temporaire retourné après validation des identifiants locaux
-    if (data.challengeRequired && data.challengeId) {
+      // Étape 2 : Challenge temporaire retourné après validation des identifiants locaux
+      if (data.challengeRequired && data.challengeId) {
+        return {
+          success: true,
+          challengeRequired: true,
+          challengeId: data.challengeId,
+          email: data.email || cleanEmail,
+          step: data.step || 'FLYASKY_OTP',
+          message: data.message,
+        };
+      }
+
+      // Si authentifié directement
+      if (data.success && data.user) {
+        return {
+          success: true,
+          user: data.user,
+        };
+      }
+
       return {
-        success: true,
-        challengeRequired: true,
-        challengeId: data.challengeId,
-        email: data.email || credentials.email,
-        step: data.step || 'FLYASKY_OTP',
-        message: data.message,
+        success: false,
+        error: data.message || 'Identifiants incorrects',
+      };
+    } catch (err: any) {
+      const serverMsg =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Identifiants incorrects';
+      return {
+        success: false,
+        error: serverMsg,
       };
     }
-
-    // Si authentifié directement
-    if (data.success && data.user) {
-      return {
-        success: true,
-        user: data.user,
-      };
-    }
-
-    return {
-      success: false,
-      error: data.message || 'Identifiants incorrects',
-    };
   },
 
   verifyFlyAskyOtp: async (challengeId: string, email: string, otp: string): Promise<any> => {
-    email = email.trim().toLowerCase();
     const response = await api.post('/auth/flyasky/verify', { challengeId, email, otp });
     const data = response.data;
 
@@ -945,6 +974,60 @@ export const auditService = {
       sort: { sorted: true, unsorted: false, empty: false },
       empty: content.length === 0,
     };
+  },
+
+  getAllLogs: async (params: Omit<AuditFilterParams, 'page' | 'size'> = {}): Promise<AuditLog[]> => {
+    try {
+      // First try fetching with a large size from the backend
+      const response = await api.get<PageResponse<AuditLog>>('/audit-logs', {
+        params: { ...params, page: 0, size: 10000 },
+      });
+      if (response.data && Array.isArray(response.data.content)) {
+        return response.data.content;
+      }
+    } catch {
+      // Fallback to local storage if API is unreachable
+    }
+
+    // Local filter fallback
+    const all = getLocalAuditLogs();
+    let filtered = [...all];
+
+    if (params.query) {
+      const q = params.query.toLowerCase();
+      filtered = filtered.filter(
+        (l) =>
+          l.description.toLowerCase().includes(q) ||
+          l.action.toLowerCase().includes(q) ||
+          (l.userEmail && l.userEmail.toLowerCase().includes(q)) ||
+          (l.userName && l.userName.toLowerCase().includes(q)) ||
+          (l.targetResource && l.targetResource.toLowerCase().includes(q))
+      );
+    }
+
+    if (params.category && params.category !== 'ALL') {
+      filtered = filtered.filter((l) => l.category === params.category);
+    }
+
+    if (params.status && params.status !== 'ALL') {
+      filtered = filtered.filter((l) => l.status === params.status);
+    }
+
+    if (params.startDate) {
+      const startMs = new Date(params.startDate).getTime();
+      if (!isNaN(startMs)) {
+        filtered = filtered.filter((l) => new Date(l.timestamp).getTime() >= startMs);
+      }
+    }
+
+    if (params.endDate) {
+      const endMs = new Date(params.endDate).getTime();
+      if (!isNaN(endMs)) {
+        filtered = filtered.filter((l) => new Date(l.timestamp).getTime() <= endMs);
+      }
+    }
+
+    return filtered;
   },
 
   getStats: async (): Promise<AuditLogStats> => {

@@ -20,6 +20,7 @@ import {
   Download,
   Upload,
   CheckCircle,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useData, BannedPassenger } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -63,6 +64,9 @@ function Passengers() {
   const [printPassenger, setPrintPassenger] = useState<BannedPassenger | null>(null);
   const [exportFormat, setExportFormat] = useState<'csv' | 'excel'>('csv');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const templateMenuRef = useRef<HTMLDivElement | null>(null);
+  const [isTemplateMenuOpen, setIsTemplateMenuOpen] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [notification, setNotification] = useState<{
     type: 'success' | 'error';
     message: string;
@@ -70,8 +74,23 @@ function Passengers() {
 
   const showNotification = (type: 'success' | 'error', message: string) => {
     setNotification({ type, message });
-    setTimeout(() => setNotification(null), 4000);
+    setTimeout(() => setNotification(null), 5000);
   };
+
+  // Close template menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (templateMenuRef.current && !templateMenuRef.current.contains(e.target as Node)) {
+        setIsTemplateMenuOpen(false);
+      }
+    };
+    if (isTemplateMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isTemplateMenuOpen]);
 
   // Sync search query from URL parameter if provided
   useEffect(() => {
@@ -137,7 +156,7 @@ function Passengers() {
     try {
       if (modalState.mode === 'create') {
         await addPassenger(passengerData);
-        showNotification('success', 'Passager banni enregistré avec succès !');
+        showNotification('success', 'Passager banni enregistré avec succès sur Spring Boot.');
       } else if (modalState.mode === 'edit' && modalState.passenger) {
         await updatePassenger(modalState.passenger.id, passengerData);
         showNotification('success', 'Passager mis à jour avec succès.');
@@ -158,7 +177,7 @@ function Passengers() {
 
   const exportToCSV = () => {
     const csvContent = [
-      ['Nom', 'Prénom', 'Email', 'Téléphone', 'Passeport', 'Nationalité', 'Motif Interdiction', 'Date Interdiction', 'Fin Interdiction', 'Gravité', 'Statut'].join(';'),
+      ['Nom', 'Prénom', 'Email', 'Téléphone', 'Passeport', 'Pays Délivrance Passeport', 'Expiration Passeport', 'Nationalité', 'Motif Interdiction', 'Date Interdiction', 'Fin Interdiction', 'Gravité', 'Statut'].join(';'),
       ...filteredPassengers.map((p) =>
         [
           `"${p.lastName}"`,
@@ -166,6 +185,8 @@ function Passengers() {
           `"${p.email}"`,
           `"${p.phone}"`,
           `"${p.passportNumber}"`,
+          `"${p.passportIssuingCountry || ''}"`,
+          `"${p.passportExpiryDate || ''}"`,
           `"${p.nationality}"`,
           `"${(p.banReason || '').replace(/"/g, '""')}"`,
           `"${p.banDate}"`,
@@ -190,6 +211,8 @@ function Passengers() {
         Nom: p.lastName,
         Prénom: p.firstName,
         Passeport: p.passportNumber,
+        Pays_Délivrance_Passeport: p.passportIssuingCountry || 'N/A',
+        Expiration_Passeport: p.passportExpiryDate || 'N/A',
         Nationalité: p.nationality,
         Date_Naissance: p.dateOfBirth,
         Motif_Bannissement: p.banReason,
@@ -219,7 +242,182 @@ function Passengers() {
     fileInputRef.current?.click();
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  // Normalisation robuste d'une ligne importée (CSV ou Excel)
+  const normalizeRow = (rawRow: Record<string, any>): Record<string, any> => {
+    const clean: Record<string, any> = {};
+    for (const [key, val] of Object.entries(rawRow)) {
+      if (key !== undefined && key !== null) {
+        // Nettoyage de la clé (trim, minuscules, sans accents)
+        const normalizedKey = key
+          .trim()
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]/g, '');
+        clean[normalizedKey] = val;
+      }
+    }
+    return clean;
+  };
+
+  const getRowValue = (row: Record<string, any>, possibleKeys: string[]): string => {
+    for (const key of possibleKeys) {
+      const normalizedKey = key
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]/g, '');
+      if (row[normalizedKey] !== undefined && row[normalizedKey] !== null) {
+        const val = String(row[normalizedKey]).trim();
+        if (val !== '' && val !== 'null' && val !== 'undefined') {
+          return val;
+        }
+      }
+    }
+    return '';
+  };
+
+  const parseDateValue = (val: any, fallback: string = ''): string => {
+    if (!val) return fallback;
+    // Si c'est un serial Excel (nombre)
+    if (typeof val === 'number') {
+      try {
+        const dateObj = XLSX.SSF.parse_date_code(val);
+        if (dateObj) {
+          const y = dateObj.y;
+          const m = String(dateObj.m).padStart(2, '0');
+          const d = String(dateObj.d).padStart(2, '0');
+          return `${y}-${m}-${d}`;
+        }
+      } catch {}
+    }
+    const str = String(val).trim();
+    // Format DD/MM/YYYY ou DD-MM-YYYY
+    const dmyMatch = str.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})$/);
+    if (dmyMatch) {
+      const d = dmyMatch[1].padStart(2, '0');
+      const m = dmyMatch[2].padStart(2, '0');
+      const y = dmyMatch[3];
+      return `${y}-${m}-${d}`;
+    }
+    // Format YYYY-MM-DD
+    const ymdMatch = str.match(/^(\d{4})[\/\.-](\d{1,2})[\/\.-](\d{1,2})$/);
+    if (ymdMatch) {
+      const y = ymdMatch[1];
+      const m = ymdMatch[2].padStart(2, '0');
+      const d = ymdMatch[3].padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    return str || fallback;
+  };
+
+  const processImportedRows = async (rawRows: any[]) => {
+    if (!rawRows || rawRows.length === 0) {
+      showNotification('error', 'Le fichier sélectionné est vide.');
+      return;
+    }
+
+    setIsImporting(true);
+    let successCount = 0;
+    let errorCount = 0;
+    const errorsList: string[] = [];
+    const today = new Date().toISOString().split('T')[0];
+
+    for (let index = 0; index < rawRows.length; index++) {
+      const item = rawRows[index];
+      const row = normalizeRow(item);
+
+      // Extraction des champs avec prise en compte des variantes français/anglais
+      const lastName = getRowValue(row, ['nom', 'lastname', 'familyname', 'nomdefamille', 'surname']);
+      const firstName = getRowValue(row, ['prenom', 'firstname', 'givenname', 'prenoms']);
+      const passportNumber = getRowValue(row, ['passeport', 'passport', 'passportnumber', 'nopasseport', 'numpasseport']).toUpperCase();
+      const nationality = getRowValue(row, ['nationalite', 'nationality', 'pays', 'country']) || 'Togo';
+      const banReason = getRowValue(row, ['motif', 'motifinterdiction', 'motifbannissement', 'banreason', 'reason', 'motifprincipal']) || 'Signalement consigné lors de l\'import';
+
+      // Vérification minimale des champs obligatoires
+      if (!lastName && !firstName && !passportNumber) {
+        // Ligne vide ou en-tête ignorée
+        continue;
+      }
+
+      if (!passportNumber) {
+        errorCount++;
+        errorsList.push(`Ligne ${index + 2}: N° de passeport manquant`);
+        continue;
+      }
+
+      const email = getRowValue(row, ['email', 'mail', 'courriel']);
+      const phone = getRowValue(row, ['telephone', 'phone', 'tel', 'mobile', 'numerotelephone']);
+      const rawDob = getRowValue(row, ['datenaissance', 'dateofbirth', 'dob', 'datebith', 'naissance']);
+      const dateOfBirth = parseDateValue(rawDob, '1990-01-01');
+
+      const rawBanDate = getRowValue(row, ['dateinterdiction', 'datesignalement', 'bandate', 'dateban']);
+      const banDate = parseDateValue(rawBanDate, today);
+
+      const rawEndDate = getRowValue(row, ['fininterdiction', 'datefinban', 'banenddate', 'echeance', 'dateecheance']);
+      const banEndDate = rawEndDate ? parseDateValue(rawEndDate) : undefined;
+
+      const rawDuration = getRowValue(row, ['type', 'typeduree', 'banduration', 'duree']).toUpperCase();
+      const banDuration: 'PERMANENT' | 'TEMPORARY' =
+        rawDuration.includes('PERM') || rawDuration.includes('DEF') ? 'PERMANENT' : 'TEMPORARY';
+
+      const rawSeverity = getRowValue(row, ['gravite', 'severity', 'niveau', 'severite']).toUpperCase();
+      let severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'MEDIUM';
+      if (rawSeverity.includes('CRIT')) severity = 'CRITICAL';
+      else if (rawSeverity.includes('HAUT') || rawSeverity.includes('HIGH')) severity = 'HIGH';
+      else if (rawSeverity.includes('FAIB') || rawSeverity.includes('BAS') || rawSeverity.includes('LOW')) severity = 'LOW';
+
+      const notes = getRowValue(row, ['notes', 'commentaires', 'observations', 'instructions', 'rapport']);
+
+      const rawPassportExpiry = getRowValue(row, ['expirationpasseport', 'passportexpiry', 'passportexpirydate', 'dateexpirationpasseport', 'datexp']);
+      const passportExpiryDate = rawPassportExpiry ? parseDateValue(rawPassportExpiry) : undefined;
+
+      const passportIssuingCountry = getRowValue(row, ['paysdelivrancepasseport', 'paysdelivrance', 'passportissuingcountry', 'emetteur', 'paysemetteur']);
+
+      try {
+        await addPassenger({
+          firstName: firstName || 'Inconnu',
+          lastName: lastName || 'Inconnu',
+          email: email || '',
+          phone: phone || '',
+          passportNumber: passportNumber,
+          passportExpiryDate: passportExpiryDate || undefined,
+          passportIssuingCountry: passportIssuingCountry || undefined,
+          nationality: nationality,
+          dateOfBirth: dateOfBirth,
+          banReason: banReason,
+          banDate: banDate,
+          banDuration: banDuration,
+          banEndDate: banDuration === 'TEMPORARY' ? (banEndDate || undefined) : undefined,
+          severity: severity,
+          notes: notes || '',
+          status: 'ACTIVE',
+        });
+        successCount++;
+      } catch (err: any) {
+        errorCount++;
+        const msg = err?.response?.data?.message || err?.message || 'Erreur inconnue';
+        errorsList.push(`Ligne ${index + 2} (${passportNumber}): ${msg}`);
+      }
+    }
+
+    setIsImporting(false);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
+    if (successCount > 0 && errorCount === 0) {
+      showNotification('success', `Importation réussie : ${successCount} passager(s) enregistré(s) avec succès !`);
+    } else if (successCount > 0 && errorCount > 0) {
+      showNotification('success', `${successCount} passager(s) importé(s). ${errorCount} ligne(s) ignorée(s) ou en doublon.`);
+    } else {
+      const detail = errorsList.slice(0, 2).join(' | ');
+      showNotification('error', `Échec de l'importation (${errorCount} erreur(s)) : ${detail || 'Vérifiez le format du fichier.'}`);
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -228,36 +426,115 @@ function Passengers() {
     if (fileExtension === 'csv') {
       Papa.parse(file, {
         header: true,
-        skipEmptyLines: true,
+        skipEmptyLines: 'greedy',
+        encoding: 'utf-8',
         complete: async (results) => {
-          const raw = results.data as any[];
-          for (const item of raw) {
-            try {
-              await addPassenger({
-                firstName: item.firstName || item.Prénom || item.prenom || 'Inconnu',
-                lastName: item.lastName || item.Nom || item.nom || 'Inconnu',
-                email: item.email || item.Email || '',
-                phone: item.phone || item.Téléphone || '',
-                passportNumber: item.passportNumber || item.Passeport || `PASS-${Date.now()}`,
-                nationality: item.nationality || item.Nationalité || 'Togo',
-                dateOfBirth: item.dateOfBirth || '1990-01-01',
-                banReason: item.banReason || item.Motif || 'Incident consigné',
-                banDate: item.banDate || new Date().toISOString().split('T')[0],
-                banDuration: (item.banDuration || 'TEMPORARY').toUpperCase() as any,
-                severity: (item.severity || 'MEDIUM').toUpperCase() as any,
-                notes: item.notes || '',
-                status: 'ACTIVE',
-              });
-            } catch (err) {
-              console.error('Import error for item', item, err);
-            }
-          }
-          showNotification('success', 'Importation terminée avec succès sur le backend Spring Boot !');
+          await processImportedRows(results.data as any[]);
+        },
+        error: (err) => {
+          console.error('Papa Parse Error:', err);
+          showNotification('error', `Erreur de lecture CSV : ${err.message}`);
         },
       });
+    } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+      try {
+        const data = await file.arrayBuffer();
+        const workbook = XLSX.read(data, { type: 'array', cellDates: false });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+        await processImportedRows(jsonRows);
+      } catch (err: any) {
+        console.error('Excel Read Error:', err);
+        showNotification('error', `Erreur lors de la lecture du fichier Excel : ${err?.message || err}`);
+      }
     } else {
-      showNotification('error', 'Veuillez sélectionner un fichier CSV valide.');
+      showNotification('error', 'Format non supporté. Veuillez sélectionner un fichier CSV (.csv) ou Excel (.xlsx, .xls).');
     }
+  };
+
+  // Téléchargement du modèle exemplaire (CSV ou Excel)
+  const downloadTemplate = (format: 'csv' | 'excel') => {
+    const sampleRows = [
+      {
+        Nom: 'KODJO',
+        Prénom: 'Afiwa',
+        Email: 'afiwa.kodjo@example.com',
+        Téléphone: '+228 90 12 34 56',
+        Passeport: 'TG982341',
+        Pays_Délivrance_Passeport: 'Togo',
+        Expiration_Passeport: '2029-06-30',
+        Nationalité: 'Togo',
+        Date_Naissance: '1988-04-15',
+        Motif_Bannissement: 'Comportement indiscipliné grave et refus d\'obtempérer aux consignes de sécurité',
+        Date_Signalement: new Date().toISOString().split('T')[0],
+        Type: 'TEMPORARY',
+        Echeance: '2027-12-31',
+        Gravite: 'HIGH',
+        Statut: 'ACTIVE',
+        Notes: 'Incident survenu sur le vol KP022 Lomé - Dakar',
+      },
+      {
+        Nom: 'MENSAH',
+        Prénom: 'Kwame',
+        Email: 'kwame.mensah@example.com',
+        Téléphone: '+233 24 555 0192',
+        Passeport: 'GH771209',
+        Pays_Délivrance_Passeport: 'Ghana',
+        Expiration_Passeport: '2031-10-14',
+        Nationalité: 'Ghana',
+        Date_Naissance: '1982-11-20',
+        Motif_Bannissement: 'Violences verbales et agression physique envers l\'équipage de cabine (PNC)',
+        Date_Signalement: new Date().toISOString().split('T')[0],
+        Type: 'PERMANENT',
+        Echeance: '',
+        Gravite: 'CRITICAL',
+        Statut: 'ACTIVE',
+        Notes: 'Interdiction définitive sur l\'ensemble du réseau ASKY Airlines',
+      },
+    ];
+
+    if (format === 'csv') {
+      const csvContent = [
+        ['Nom', 'Prénom', 'Email', 'Téléphone', 'Passeport', 'Pays_Délivrance_Passeport', 'Expiration_Passeport', 'Nationalité', 'Date_Naissance', 'Motif_Bannissement', 'Date_Signalement', 'Type', 'Echeance', 'Gravite', 'Statut', 'Notes'].join(';'),
+        ...sampleRows.map((r) =>
+          [
+            `"${r.Nom}"`,
+            `"${r.Prénom}"`,
+            `"${r.Email}"`,
+            `"${r.Téléphone}"`,
+            `"${r.Passeport}"`,
+            `"${r.Pays_Délivrance_Passeport}"`,
+            `"${r.Expiration_Passeport}"`,
+            `"${r.Nationalité}"`,
+            `"${r.Date_Naissance}"`,
+            `"${r.Motif_Bannissement.replace(/"/g, '""')}"`,
+            `"${r.Date_Signalement}"`,
+            `"${r.Type}"`,
+            `"${r.Echeance}"`,
+            `"${r.Gravite}"`,
+            `"${r.Statut}"`,
+            `"${r.Notes.replace(/"/g, '""')}"`,
+          ].join(';')
+        ),
+      ].join('\n');
+
+      const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Modele_Import_Passagers_Bannis_ASKY.csv`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } else {
+      const worksheet = XLSX.utils.json_to_sheet(sampleRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Modèle Import ASKY');
+      XLSX.writeFile(workbook, `Modele_Import_Passagers_Bannis_ASKY.xlsx`);
+    }
+
+    setIsTemplateMenuOpen(false);
+    showNotification('success', `Modèle ${format.toUpperCase()} téléchargé avec succès !`);
   };
 
   const listNationalite = Array.from(new Set(passengers.map((p) => p.nationality))).sort();
@@ -268,6 +545,9 @@ function Passengers() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2">
+            <span className="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+              <Shield className="h-6 w-6" />
+            </span>
             <h1 className="text-2xl sm:text-3xl font-black text-gray-900 dark:text-white">
               {t('passengers.title')}
             </h1>
@@ -278,18 +558,62 @@ function Passengers() {
         <div className="flex flex-wrap items-center gap-2">
           {isAdmin && (
             <>
+              {/* Bouton Télécharger un Modèle Exemplaire */}
+              <div className="relative" ref={templateMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsTemplateMenuOpen((prev) => !prev)}
+                  className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-xl text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
+                  title={t('passengers.downloadTemplateTitle')}
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>{t('passenger.downloadTemplate') || t('passenger.template')}</span>
+                  <ChevronDown className={`h-3 w-3 transition-transform ${isTemplateMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {isTemplateMenuOpen && (
+                  <div className="absolute left-0 mt-1.5 w-48 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xl z-50 py-1 text-xs divide-y divide-gray-100 dark:divide-gray-700/60 animate-in fade-in">
+                    <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                      {t('passengers.templateFormat')}
+                    </div>
+                    <div className="py-1">
+                      <button
+                        type="button"
+                        onClick={() => downloadTemplate('excel')}
+                        className="w-full text-left px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-gray-700 dark:text-gray-200 flex items-center justify-between transition-colors"
+                      >
+                        <span className="font-medium">{t('passengers.excelTemplate') || 'Modèle Excel (.xlsx)'}</span>
+                        <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 px-1.5 py-0.5 rounded font-mono font-bold">XLSX</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => downloadTemplate('csv')}
+                        className="w-full text-left px-3 py-2 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-gray-700 dark:text-gray-200 flex items-center justify-between transition-colors"
+                      >
+                        <span className="font-medium">{t('passengers.csvTemplate') || 'Modèle CSV (.csv)'}</span>
+                        <span className="text-[10px] bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 px-1.5 py-0.5 rounded font-mono font-bold">CSV</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Bouton Importer CSV / Excel */}
               <button
+                type="button"
                 onClick={handleClickImport}
-                className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-xl text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
+                disabled={isImporting}
+                className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-xl text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center space-x-1.5 transition cursor-pointer shadow-xs disabled:opacity-50"
+                title="Importer des passagers à partir d'un fichier CSV ou Excel (.xlsx, .xls)"
               >
                 <Upload className="h-3.5 w-3.5 text-blue-500" />
-                <span>{t('passenger.importer')}</span>
+                <span>{isImporting ? 'Importation en cours...' : (t('passenger.importer') || 'Importer')}</span>
               </button>
               <input
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
-                accept=".csv"
+                accept=".csv, .xlsx, .xls, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, text/csv"
                 className="hidden"
               />
             </>
@@ -335,7 +659,7 @@ function Passengers() {
               placeholder={t('passengers.search')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-xl text-xs placeholder-gray-400 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:bg-white"
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-xl text-xs placeholder-gray-400 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:bg-white dark:focus:bg-gray-700"
             />
           </div>
           <button
@@ -367,10 +691,10 @@ function Passengers() {
                 className="w-full border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
               >
                 <option value="">{t('passengers.all')}</option>
-                <option value="CRITICAL">{t('dashboard.critical')}</option>
-                <option value="HIGH">{t('dashboard.high')}</option>
-                <option value="MEDIUM">{t('dashboard.medium')}</option>
-                <option value="LOW">{t('dashboard.low')}</option>
+                <option value="CRITICAL">{t('passengers.critical')}</option>
+                <option value="HIGH">{t('passengers.high')}</option>
+                <option value="MEDIUM">{t('passengers.medium')}</option>
+                <option value="LOW">{t('passengers.low')}</option>
               </select>
             </div>
 
@@ -386,7 +710,7 @@ function Passengers() {
                 <option value="">{t('passengers.all')}</option>
                 <option value="ACTIVE">{t('passengers.active')}</option>
                 <option value="EXPIRED">{t('passengers.expired')}</option>
-                <option value="UNDER_REVIEW">{t('passengers.underReview')} </option>
+                <option value="UNDER_REVIEW">{t('passengers.underReview')}</option>
               </select>
             </div>
 
@@ -454,7 +778,7 @@ function Passengers() {
           </div>
 
           <div className="flex items-center space-x-1.5 pl-3 border-l border-gray-200 dark:border-gray-700">
-            <span className="text-gray-500">Par page :</span>
+            <span className="text-gray-500">{t('passengers.perPage')} :</span>
             <select
               value={itemsPerPage}
               onChange={handleItemsPerPageChange}
@@ -477,7 +801,7 @@ function Passengers() {
               <thead className="bg-gray-50 dark:bg-gray-700/60 text-gray-500 uppercase tracking-wider font-semibold">
                 <tr>
                   <th className="px-5 py-3">{t('passenger.passenger')}</th>
-                  <th className="px-5 py-3">{t('passengers.passport')}</th>
+                  <th className="px-5 py-3">Passeport</th>
                   <th className="px-5 py-3">{t('passengers.nationality')}</th>
                   <th className="px-5 py-3">{t('passengers.dateban')}</th>
                   <th className="px-5 py-3">{t('passengers.severity')}</th>
@@ -531,10 +855,10 @@ function Passengers() {
                         }`}
                       >
                         {passenger.status === 'ACTIVE'
-                          ? t('passengers.active')
+                          ? 'Actif'
                           : passenger.status === 'EXPIRED'
-                          ? t('passengers.expired')
-                          : t('passengers.underReview')}
+                          ? 'Expiré'
+                          : 'En révision'}
                       </span>
                     </td>
                     <td
@@ -629,7 +953,7 @@ function Passengers() {
       )}
 
       {/* Printable Official ASKY Security Dossier Modal */}
-{printPassenger && (
+      {printPassenger && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4">
           <div className="bg-white text-gray-900 rounded-2xl shadow-2xl max-w-2xl w-full p-8 space-y-6 max-h-[90vh] overflow-y-auto printable-dossier">
             {/* Official ASKY Header */}
@@ -681,6 +1005,18 @@ function Passengers() {
                   <p className="text-gray-500">{t('print.dateOfBirth')}</p>
                   <p className="font-bold">{printPassenger.dateOfBirth || 'N/A'}</p>
                 </div>
+                {printPassenger.passportIssuingCountry && (
+                  <div className="p-3 bg-gray-50 rounded-xl space-y-1">
+                    <p className="text-gray-500">{t('passengers.passportIssuingCountry') || 'Pays délivrance'}</p>
+                    <p className="font-bold">{printPassenger.passportIssuingCountry}</p>
+                  </div>
+                )}
+                {printPassenger.passportExpiryDate && (
+                  <div className="p-3 bg-gray-50 rounded-xl space-y-1">
+                    <p className="text-gray-500">{t('passengers.passportExpiryDate') || 'Expiration passeport'}</p>
+                    <p className="font-bold font-mono">{printPassenger.passportExpiryDate}</p>
+                  </div>
+                )}
                 <div className="p-3 bg-gray-50 rounded-xl space-y-1">
                   <p className="text-gray-500">{t('print.banDate')}</p>
                   <p className="font-bold">{printPassenger.banDate}</p>

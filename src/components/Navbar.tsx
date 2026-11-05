@@ -82,7 +82,7 @@ function Navbar({ onMenuClick }: NavbarProps) {
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder={t("nav.searchPlaceholder")}
-                  className="w-full pl-9 pr-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-xl text-xs placeholder-gray-400 bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:bg-white transition"
+                  className="w-full pl-9 pr-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-xl text-xs placeholder-gray-400 bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:bg-white dark:focus:bg-gray-700 transition"
                 />
               </div>
             </form>
@@ -143,8 +143,12 @@ function Navbar({ onMenuClick }: NavbarProps) {
                   <div className="text-xs font-bold text-gray-900 dark:text-white leading-tight">
                     {user?.name || 'Agent Sûreté'}
                   </div>
-                  <div className="text-[10px] font-medium text-amber-600 dark:text-amber-400">
-                    {user?.role === 'admin' ? 'Administrateur' : 'Agent Escale'}
+                   <div className="text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                    {user?.role === 'super-admin'
+                      ? 'Super Administrateur'
+                      : user?.role === 'admin'
+                      ? 'Administrateur'
+                      : 'Agent Escale'}
                   </div>
                 </div>
                 <img

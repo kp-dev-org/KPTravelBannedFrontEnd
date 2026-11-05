@@ -13,16 +13,16 @@ import Login from "./pages/Login";
 import ErrorPage from "./pages/Errorpage";
 import InactivityWarningModal from "./components/InactivityWarningModal";
 import SessionExpiredModal from "./components/SessionExpiredModal";
-import { LanguageProvider } from './contexts/LanguageContext';
+import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { DataProvider } from "./contexts/DataContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { ApiError } from "./services/Api";
-
 function AppContent() {
   const { user, loading } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [globalError, setGlobalError] = useState<ApiError | null>(null);
+  const { t } = useLanguage();
 
   window.handleGlobalError = (error: any) => {
     setGlobalError(error);
@@ -36,7 +36,7 @@ function AppContent() {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-gray-900 text-white space-y-4">
         <div className="w-12 h-12 border-4 border-yellow-400 border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-sm font-medium text-yellow-300">Vérification de session Spring Boot...</p>
+        <p className="text-sm font-medium text-yellow-300">{t("app.loading")}</p>
       </div>
     );
   }

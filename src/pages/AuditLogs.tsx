@@ -29,9 +29,30 @@ import {
   Calendar,
   CalendarRange,
   RotateCcw,
+  BarChart3,
+  TrendingUp,
+  PieChart as PieChartIcon,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { auditService, AuditLog, AuditLogStats } from '../services/Api';
 
 type DatePreset = 'ALL' | 'TODAY' | '7DAYS' | '30DAYS' | 'THIS_MONTH' | 'CUSTOM';
@@ -39,8 +60,10 @@ type DatePreset = 'ALL' | 'TODAY' | '7DAYS' | '30DAYS' | 'THIS_MONTH' | 'CUSTOM'
 export default function AuditLogs() {
   const { user, isAdmin } = useAuth();
   const { t } = useLanguage();
+  const { isDarkMode } = useTheme();
 
   const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [chartLogs, setChartLogs] = useState<AuditLog[]>([]);
   const [stats, setStats] = useState<AuditLogStats>({
     totalLogs: 0,
     todayLogs: 0,
@@ -49,6 +72,7 @@ export default function AuditLogs() {
   });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showCharts, setShowCharts] = useState(true);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -148,16 +172,21 @@ export default function AuditLogs() {
     startDate && endDate && new Date(startDate).getTime() > new Date(endDate).getTime()
   );
 
+  const [exporting, setExporting] = useState<string | null>(null);
+
   const fetchLogs = async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    else setLoading(true);
+    if (showRefreshing) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
 
     try {
       // Format start and end date with bounds for Spring Boot ISO LocalDateTime
       const formattedStart = startDate ? `${startDate}T00:00:00` : undefined;
       const formattedEnd = endDate ? `${endDate}T23:59:59` : undefined;
 
-      const [logsRes, statsRes] = await Promise.all([
+      const [logsRes, statsRes, allChartLogs] = await Promise.all([
         auditService.getLogs({
           query: searchQuery.trim() || undefined,
           category: selectedCategory !== 'ALL' ? selectedCategory : undefined,
@@ -168,17 +197,25 @@ export default function AuditLogs() {
           size: pageSize,
         }),
         auditService.getStats(),
+        auditService.getAllLogs({
+          category: selectedCategory !== 'ALL' ? selectedCategory : undefined,
+          status: selectedStatus !== 'ALL' ? selectedStatus : undefined,
+          startDate: formattedStart,
+          endDate: formattedEnd,
+        }),
       ]);
 
       setLogs(logsRes.content || []);
       setTotalPages(logsRes.totalPages || 1);
       setTotalElements(logsRes.totalElements || 0);
       setStats(statsRes);
+      setChartLogs(allChartLogs || []);
     } catch (err) {
       console.error('Erreur lors du chargement des journaux d\'audit:', err);
     } finally {
       setLoading(false);
-      setRefreshing(false);
+      // Garder un délai visuel minimal pour que l'utilisateur voie l'animation du bouton d'actualisation
+      setTimeout(() => setRefreshing(false), 500);
     }
   };
 
@@ -204,43 +241,222 @@ export default function AuditLogs() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Export to CSV with applied date range in file name
-  const handleExportCSV = () => {
-    const headers = ['ID', 'Date & Heure', 'Action', 'Catégorie', 'Utilisateur', 'Rôle', 'Ressource', 'Statut', 'IP', 'Description'];
-    const rows = logs.map((l) => [
-      l.id,
-      new Date(l.timestamp).toLocaleString('fr-FR'),
-      l.action,
-      l.category,
-      l.userEmail || l.userName || 'N/A',
-      l.userRole || 'N/A',
-      `"${(l.targetResource || '').replace(/"/g, '""')}"`,
-      l.status,
-      l.ipAddress || 'N/A',
-      `"${(l.description || '').replace(/"/g, '""')}"`,
-    ]);
+  // Agrégation des tendances temporelles pour Recharts (Accès réussis, Alertes, Échecs)
+  const timelineChartData = useMemo(() => {
+    const dataSource = chartLogs.length > 0 ? chartLogs : logs;
+    if (dataSource.length === 0) return [];
 
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    const dateSuffix = startDate || endDate ? `_${startDate || 'debut'}_au_${endDate || 'fin'}` : `_${new Date().toISOString().slice(0, 10)}`;
-    link.setAttribute('download', `passbanned_audit_logs${dateSuffix}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // Regrouper par date (AAAA-MM-JJ)
+    const map = new Map<string, { date: string; displayDate: string; success: number; warning: number; failure: number; total: number }>();
+
+    // Trier les logs chronologiquement
+    const sorted = [...dataSource].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    for (const log of sorted) {
+      const d = new Date(log.timestamp);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const displayDate = d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+
+      if (!map.has(key)) {
+        map.set(key, { date: key, displayDate, success: 0, warning: 0, failure: 0, total: 0 });
+      }
+      const entry = map.get(key)!;
+      entry.total++;
+      if (log.status === 'WARNING') entry.warning++;
+      else if (log.status === 'FAILURE') entry.failure++;
+      else entry.success++;
+    }
+
+    return Array.from(map.values());
+  }, [chartLogs, logs]);
+
+  // Agrégation par catégorie d'activité pour le graphique camembert / barres
+  const categoryChartData = useMemo(() => {
+    const dataSource = chartLogs.length > 0 ? chartLogs : logs;
+    if (dataSource.length === 0) return [];
+
+    const map = new Map<string, number>();
+    for (const log of dataSource) {
+      const cat = log.category || 'SYSTEM';
+      map.set(cat, (map.get(cat) || 0) + 1);
+    }
+
+    const categoryNamesFr: Record<string, string> = {
+      PASSENGERS: 'Passagers',
+      USERS: 'Comptes Agents',
+      AUTHENTICATION: 'Authentification',
+      SCREENING: 'Contrôles Filtrage',
+      SECURITY: 'Sûreté Vols',
+      SYSTEM: 'Système',
+    };
+
+    return Array.from(map.entries()).map(([cat, count]) => ({
+      name: categoryNamesFr[cat] || cat,
+      categoryKey: cat,
+      count,
+    })).sort((a, b) => b.count - a.count);
+  }, [chartLogs, logs]);
+
+  // Helper to fetch all logs matching current filters for a complete export
+  const fetchAllMatchingLogs = async (): Promise<AuditLog[]> => {
+    const formattedStart = startDate ? `${startDate}T00:00:00` : undefined;
+    const formattedEnd = endDate ? `${endDate}T23:59:59` : undefined;
+    return await auditService.getAllLogs({
+      query: searchQuery.trim() || undefined,
+      category: selectedCategory !== 'ALL' ? selectedCategory : undefined,
+      status: selectedStatus !== 'ALL' ? selectedStatus : undefined,
+      startDate: formattedStart,
+      endDate: formattedEnd,
+    });
   };
 
-  // Export to JSON
-  const handleExportJSON = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(logs, null, 2));
-    const link = document.createElement('a');
-    link.setAttribute('href', dataStr);
-    const dateSuffix = startDate || endDate ? `_${startDate || 'debut'}_au_${endDate || 'fin'}` : `_${new Date().toISOString().slice(0, 10)}`;
-    link.setAttribute('download', `passbanned_audit_logs${dateSuffix}.json`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const getExportDateSuffix = () => {
+    return startDate || endDate
+      ? `_${startDate || 'debut'}_au_${endDate || 'fin'}`
+      : `_${new Date().toISOString().slice(0, 10)}`;
+  };
+
+  // Export to CSV (Complet : tous les enregistrements + toutes les colonnes y compris Détails Techniques)
+  const handleExportCSV = async () => {
+    try {
+      setExporting('csv');
+      const allLogs = await fetchAllMatchingLogs();
+      const headers = [
+        'ID',
+        'Date & Heure',
+        'Action',
+        'Catégorie',
+        'Description',
+        'Utilisateur',
+        'Rôle',
+        'Ressource Ciblée',
+        'Statut',
+        'Adresse IP',
+        'Détails Techniques',
+      ];
+
+      const rows = allLogs.map((l) => [
+        l.id,
+        `"${new Date(l.timestamp).toLocaleString('fr-FR')}"`,
+        `"${(l.action || '').replace(/"/g, '""')}"`,
+        `"${(l.category || '').replace(/"/g, '""')}"`,
+        `"${(l.description || '').replace(/"/g, '""')}"`,
+        `"${(l.userEmail || l.userName || 'N/A').replace(/"/g, '""')}"`,
+        `"${(l.userRole || 'N/A').replace(/"/g, '""')}"`,
+        `"${(l.targetResource || '').replace(/"/g, '""')}"`,
+        `"${(l.status || 'SUCCESS').replace(/"/g, '""')}"`,
+        `"${(l.ipAddress || 'N/A').replace(/"/g, '""')}"`,
+        `"${(l.details || '').replace(/"/g, '""')}"`,
+      ]);
+
+      const csvContent =
+        '\uFEFF' + [headers.join(';'), ...rows.map((e) => e.join(';'))].join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `passbanned_audit_logs${getExportDateSuffix()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Erreur export CSV:', err);
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  // Export to JSON (Complet avec toutes les métadonnées)
+  const handleExportJSON = async () => {
+    try {
+      setExporting('json');
+      const allLogs = await fetchAllMatchingLogs();
+      const exportData = {
+        exportedAt: new Date().toISOString(),
+        exportedBy: user?.email || 'Administrateur',
+        totalRecords: allLogs.length,
+        filtersApplied: {
+          searchQuery: searchQuery || null,
+          category: selectedCategory,
+          status: selectedStatus,
+          startDate: startDate || null,
+          endDate: endDate || null,
+        },
+        logs: allLogs,
+      };
+
+      const dataStr = JSON.stringify(exportData, null, 2);
+      const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `passbanned_audit_logs${getExportDateSuffix()}.json`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Erreur export JSON:', err);
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  // Export to TXT (Format textuel officiel lisible et complet)
+  const handleExportTXT = async () => {
+    try {
+      setExporting('txt');
+      const allLogs = await fetchAllMatchingLogs();
+      const border = '='.repeat(80);
+      const subBorder = '-'.repeat(80);
+      const lines: string[] = [];
+
+      lines.push(border);
+      lines.push('  ASKY AIRLINES • REGISTRE OFFICIEL DE TRAÇABILITÉ ET D\'AUDIT SÛRETÉ');
+      lines.push(`  Date de génération : ${new Date().toLocaleString('fr-FR')}`);
+      lines.push(`  Opérateur demandeur : ${user?.name || user?.email || 'Administrateur'}`);
+      lines.push(`  Volume extrait     : ${allLogs.length} événement(s) consigné(s)`);
+      if (hasActiveFilters) {
+        lines.push(`  Filtres appliqués  : Catégorie=[${selectedCategory}], Statut=[${selectedStatus}], Période=[${startDate || 'Début'} à ${endDate || 'Fin'}], Recherche=[${searchQuery || 'Aucune'}]`);
+      }
+      lines.push(border);
+      lines.push('');
+
+      allLogs.forEach((l, index) => {
+        lines.push(`[ÉVÉNEMENT #${l.id}] - ${new Date(l.timestamp).toLocaleString('fr-FR')} - STATUT: ${l.status}`);
+        lines.push(`Action       : ${l.action}`);
+        lines.push(`Catégorie    : ${l.category}`);
+        lines.push(`Utilisateur  : ${l.userName || 'Système'} (${l.userEmail || 'N/A'}) [Rôle: ${l.userRole || 'N/A'}]`);
+        lines.push(`Adresse IP   : ${l.ipAddress || 'Non renseignée'}`);
+        lines.push(`Ressource    : ${l.targetResource || 'N/A'}`);
+        lines.push(`Description  : ${l.description}`);
+        if (l.details && l.details.trim()) {
+          lines.push(`Détails      : ${l.details.trim()}`);
+        }
+        lines.push(subBorder);
+      });
+
+      lines.push('');
+      lines.push('Fin du registre d\'audit. Fichier scellé et certifié conforme au protocole Sûreté ASKY Airlines.');
+
+      const textContent = lines.join('\r\n');
+      const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `passbanned_audit_logs${getExportDateSuffix()}.txt`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Erreur export TXT:', err);
+    } finally {
+      setExporting(null);
+    }
   };
 
   // Action badge helper
@@ -335,39 +551,68 @@ export default function AuditLogs() {
           <h1 className="text-2xl sm:text-3xl font-black text-gray-900 dark:text-white tracking-tight mt-1">
             {t('audit.title')}
           </h1>
-          <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-            {t('audit.subtitle')}
-          </p>
         </div>
 
         {/* Top actions */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Bouton Afficher / Masquer Graphiques Recharts */}
+          <button
+            onClick={() => setShowCharts(!showCharts)}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl border transition shadow-xs cursor-pointer ${
+              showCharts
+                ? 'text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-950/50 border-yellow-300 dark:border-yellow-700 hover:bg-yellow-100 dark:hover:bg-yellow-900/60'
+                : 'text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
+            }`}
+            title={showCharts ? t('audit.chartToggleHide') : t('audit.chartToggleShow')}
+          >
+            <BarChart3 className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" />
+            <span className="hidden sm:inline">{showCharts ? t('audit.chartToggleHide') : t('audit.chartToggleShow')}</span>
+            <span className="sm:hidden">{showCharts ? 'Masquer' : 'Graphiques'}</span>
+            {showCharts ? <ChevronUp className="w-3 h-3 text-yellow-600 dark:text-yellow-400" /> : <ChevronDown className="w-3 h-3 text-gray-500" />}
+          </button>
+
+          {/* Bouton Actualiser */}
           <button
             onClick={() => fetchLogs(true)}
-            disabled={refreshing}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-xs cursor-pointer"
+            disabled={refreshing || loading}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-xs cursor-pointer disabled:opacity-60"
             title={t('dashboard.refresh')}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-yellow-500' : ''}`} />
-            <span>{t('dashboard.refresh')}</span>
+            <span>{refreshing ? 'Actualisation...' : t('dashboard.refresh')}</span>
           </button>
 
+          {/* Bouton Export CSV */}
           <button
             onClick={handleExportCSV}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 rounded-xl hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition shadow-xs cursor-pointer"
-            title="CSV / Excel"
+            disabled={exporting !== null}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 rounded-xl hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition shadow-xs cursor-pointer disabled:opacity-60"
+            title="Exporter l'ensemble des journaux d'audit au format CSV (tableur)"
           >
-            <FileSpreadsheet className="w-3.5 h-3.5" />
-            <span>{t('audit.exportCsv')}</span>
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span>{exporting === 'csv' ? (t('audit.exporting') || 'Exportation...') : t('audit.exportCsv')}</span>
           </button>
 
+          {/* Bouton Export TXT (Fichier Texte) */}
+          <button
+            onClick={handleExportTXT}
+            disabled={exporting !== null}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 rounded-xl hover:bg-amber-100 dark:hover:bg-amber-900/60 transition shadow-xs cursor-pointer disabled:opacity-60"
+            title="Exporter l'ensemble des journaux au format texte brut (.txt) officiel"
+          >
+            <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+            <span>{exporting === 'txt' ? (t('audit.exporting') || 'Exportation...') : (t('audit.exportTxt') || 'Texte (TXT)')}</span>
+          </button>
+
+          {/* Bouton Export JSON */}
           <button
             onClick={handleExportJSON}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-950/50 border border-blue-300 dark:border-blue-800 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-900/60 transition shadow-xs cursor-pointer"
-            title="JSON"
+            disabled={exporting !== null}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-950/50 border border-blue-300 dark:border-blue-800 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-900/60 transition shadow-xs cursor-pointer disabled:opacity-60"
+            title="Exporter au format structuré JSON pour intégration technique"
           >
-            <FileCode className="w-3.5 h-3.5" />
-            <span>{t('audit.exportJson')}</span>
+            <FileCode className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+            <span>{exporting === 'json' ? (t('audit.exporting') || 'Exportation...') : t('audit.exportJson')}</span>
           </button>
         </div>
       </div>
@@ -442,6 +687,221 @@ export default function AuditLogs() {
           </span>
         </div>
       </div>
+
+      {/* Visual Analytics / Recharts Section */}
+      {showCharts && (
+        <div className="bg-white dark:bg-gray-800/90 rounded-2xl p-4 sm:p-6 border border-gray-200 dark:border-gray-700/80 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-gray-100 dark:border-gray-700/60">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-yellow-100 dark:bg-yellow-950/80 text-yellow-600 dark:text-yellow-400 flex items-center justify-center shrink-0">
+                <TrendingUp className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-sm sm:text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <span>{t('audit.chartTitle') || 'Tendances des Accès & Alertes de Sûreté'}</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-yellow-100 dark:bg-yellow-950/80 text-yellow-800 dark:text-yellow-300 uppercase tracking-wide">
+                    Recharts
+                  </span>
+                </h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {t('audit.chartSubtitle') || 'Visualisation chronologique des accès autorisés, alertes de filtrage et rejets'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="text-[11px] font-medium text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-900 px-3 py-1.5 rounded-xl border border-gray-200 dark:border-gray-700 flex items-center gap-1.5 shadow-2xs">
+                <Calendar className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" />
+                {startDate || endDate ? (
+                  <span>
+                    {startDate || 'Début'} → {endDate || 'Fin'}
+                  </span>
+                ) : (
+                  <span>{datePreset === 'ALL' ? 'Toutes les périodes' : datePreset}</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {timelineChartData.length === 0 ? (
+            <div className="py-12 text-center text-gray-500 dark:text-gray-400">
+              <BarChart3 className="w-10 h-10 mx-auto mb-2 text-gray-300 dark:text-gray-600" />
+              <p className="text-xs sm:text-sm font-semibold">
+                Aucune donnée d'audit enregistrée pour la période sélectionnée.
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                Modifiez vos filtres de dates pour visualiser les tendances.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-1">
+              {/* Timeline Trend Area Chart (2 Cols) */}
+              <div className="lg:col-span-2 space-y-2">
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-emerald-500" />
+                    Évolution chronologique des accès et alertes
+                  </span>
+                  <span className="text-[11px] text-gray-500 dark:text-gray-400 font-medium">
+                    {timelineChartData.length} jour(s) analysé(s)
+                  </span>
+                </div>
+
+                <div className="w-full h-64 sm:h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart
+                      data={timelineChartData}
+                      margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                    >
+                      <defs>
+                        <linearGradient id="colorSuccess" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                        </linearGradient>
+                        <linearGradient id="colorWarning" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.5} />
+                          <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+                        </linearGradient>
+                        <linearGradient id="colorFailure" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#ef4444" stopOpacity={0.5} />
+                          <stop offset="95%" stopColor="#ef4444" stopOpacity={0.0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke={isDarkMode ? '#374151' : '#f3f4f6'}
+                      />
+                      <XAxis
+                        dataKey="displayDate"
+                        stroke={isDarkMode ? '#9ca3af' : '#6b7280'}
+                        fontSize={11}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        stroke={isDarkMode ? '#9ca3af' : '#6b7280'}
+                        fontSize={11}
+                        tickLine={false}
+                        allowDecimals={false}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+                          borderColor: isDarkMode ? '#374151' : '#e5e7eb',
+                          borderRadius: '0.75rem',
+                          color: isDarkMode ? '#f3f4f6' : '#111827',
+                          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                          fontSize: '12px',
+                        }}
+                      />
+                      <Legend
+                        verticalAlign="top"
+                        height={36}
+                        iconType="circle"
+                        wrapperStyle={{ fontSize: '11px', paddingTop: '0px' }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="success"
+                        name={t('audit.chartAccess') || 'Accès & Opérations'}
+                        stroke="#10b981"
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#colorSuccess)"
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="warning"
+                        name={t('audit.chartWarnings') || 'Alertes de sûreté'}
+                        stroke="#f59e0b"
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#colorWarning)"
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="failure"
+                        name={t('audit.chartFailures') || 'Échecs & Rejets'}
+                        stroke="#ef4444"
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#colorFailure)"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Category Breakdown (1 Col) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                    <PieChartIcon className="w-3.5 h-3.5 text-blue-500" />
+                    {t('audit.chartCategoryTitle') || 'Répartition par Domaine'}
+                  </span>
+                  <span className="text-[11px] text-gray-500 dark:text-gray-400 font-medium">
+                    Activités
+                  </span>
+                </div>
+
+                <div className="w-full h-64 sm:h-72">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={categoryChartData}
+                      layout="vertical"
+                      margin={{ top: 10, right: 15, left: 15, bottom: 0 }}
+                    >
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke={isDarkMode ? '#374151' : '#f3f4f6'}
+                        horizontal={false}
+                      />
+                      <XAxis
+                        type="number"
+                        stroke={isDarkMode ? '#9ca3af' : '#6b7280'}
+                        fontSize={11}
+                        tickLine={false}
+                        allowDecimals={false}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="name"
+                        stroke={isDarkMode ? '#9ca3af' : '#6b7280'}
+                        fontSize={10}
+                        tickLine={false}
+                        width={85}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: isDarkMode ? '#111827' : '#ffffff',
+                          borderColor: isDarkMode ? '#374151' : '#e5e7eb',
+                          borderRadius: '0.75rem',
+                          color: isDarkMode ? '#f3f4f6' : '#111827',
+                          fontSize: '12px',
+                        }}
+                        formatter={(val: any) => [`${val} journal(aux)`, 'Activité']}
+                      />
+                      <Bar dataKey="count" radius={[0, 6, 6, 0]}>
+                        {categoryChartData.map((entry, index) => {
+                          const catColors: Record<string, string> = {
+                            PASSENGERS: '#3b82f6',
+                            SCREENING: '#f59e0b',
+                            AUTHENTICATION: '#10b981',
+                            USERS: '#8b5cf6',
+                            SECURITY: '#ef4444',
+                            SYSTEM: '#64748b',
+                          };
+                          const fill = catColors[entry.categoryKey] || '#eab308';
+                          return <Cell key={`cell-${index}`} fill={fill} />;
+                        })}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Filter Bar with Text Search, Categories, Status AND Date Range Pickers */}
       <div className="bg-white dark:bg-gray-800/90 rounded-2xl p-4 sm:p-5 border border-gray-200 dark:border-gray-700/80 shadow-xs space-y-4">

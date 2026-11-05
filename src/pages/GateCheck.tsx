@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, ShieldAlert, Search, Plane, Clock, User, FileText, PhoneCall, RefreshCw } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Search, Plane, Clock, User, FileText, PhoneCall, RefreshCw, X } from 'lucide-react';
 import { useData, BannedPassenger } from '../contexts/DataContext';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -89,8 +89,22 @@ export default function GateCheck() {
                 value={passportInput}
                 onChange={(e) => setPassportInput(e.target.value)}
                 placeholder="Ex: TG-8849201, SN-4029184..."
-                className="w-full pl-11 pr-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-base font-mono focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:bg-white uppercase tracking-wider"
+                className="w-full pl-11 pr-10 py-3 border border-gray-300 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-400 text-base font-mono focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:bg-white dark:focus:bg-gray-700 uppercase tracking-wider transition-colors"
               />
+              {passportInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPassportInput('');
+                    setHasSearched(false);
+                    setMatchedPassenger(null);
+                  }}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer"
+                  title="Effacer la saisie"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              )}
             </div>
             <button
               type="submit"

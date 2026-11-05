@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
   Save,
@@ -15,6 +15,8 @@ import {
   Upload,
   CheckCircle2,
   Sparkles,
+  ChevronDown,
+  Search,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Select from 'react-select';
@@ -22,7 +24,15 @@ import countryList from 'react-select-country-list';
 import { BannedPassenger } from '../contexts/DataContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { passengerService } from '../services/Api';
-import { json } from 'stream/consumers';
+
+import { useTheme } from '../contexts/ThemeContext';
+import {
+  COUNTRY_DIAL_CODES,
+  findCountryByPhone,
+  searchCountryDialCodes,
+  getFlagEmoji,
+  CountryDialCode,
+} from '../data/countryDialCodes';
 
 interface PassengerModalProps {
   isOpen: boolean;
@@ -40,8 +50,28 @@ const COMMON_BAN_REASONS = [
   'Tentative d\'intrusion en cockpit ou manipulation d\'équipements de secours',
 ];
 
+const parsePhone = (rawPhone?: string) => {
+  if (!rawPhone || !rawPhone.trim()) {
+    return { dialCode: '+228', localNumber: '' };
+  }
+  const clean = rawPhone.trim();
+  const match = findCountryByPhone(clean);
+  if (match) {
+    const local = clean.slice(match.code.length).trim();
+    return { dialCode: match.code, localNumber: local };
+  }
+  if (clean.startsWith('+')) {
+    const parts = clean.split(' ');
+    if (parts.length > 1) {
+      return { dialCode: parts[0], localNumber: parts.slice(1).join(' ').trim() };
+    }
+  }
+  return { dialCode: '+228', localNumber: clean };
+};
+
 export default function PassengerModal({ isOpen, onClose, onSave, passenger, mode }: PassengerModalProps) {
   const { t } = useLanguage();
+  const { isDarkMode } = useTheme();
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -49,6 +79,8 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
     email: '',
     phone: '',
     passportNumber: '',
+    passportExpiryDate: '',
+    passportIssuingCountry: '',
     nationality: '',
     dateOfBirth: '',
     banReason: '',
@@ -61,19 +93,63 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
     imageUrl: '',
   });
 
+  const [phoneDialCode, setPhoneDialCode] = useState('+228');
+  const [phoneLocalNumber, setPhoneLocalNumber] = useState('');
+  const [isDialDropdownOpen, setIsDialDropdownOpen] = useState(false);
+  const [dialSearchQuery, setDialSearchQuery] = useState('');
+  const dialDropdownRef = useRef<HTMLDivElement>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [uploadingImage, setUploadingImage] = useState(false);
 
-  const countryOptions = useMemo(() => countryList().getData(), []);
+  // Close dial dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dialDropdownRef.current && !dialDropdownRef.current.contains(e.target as Node)) {
+        setIsDialDropdownOpen(false);
+      }
+    };
+    if (isDialDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isDialDropdownOpen]);
+
+  // Enhanced country list with flags
+  const countryOptions = useMemo(() => {
+    const rawData = countryList().getData();
+    return rawData.map((item: { label: string; value: string }) => ({
+      ...item,
+      flag: getFlagEmoji(item.value),
+    }));
+  }, []);
+
+  // Filtered dial code proposals for autocomplete
+  const filteredDialCodes = useMemo(() => {
+    return searchCountryDialCodes(dialSearchQuery);
+  }, [dialSearchQuery]);
+
+  // Active flag for current dial code
+  const currentDialFlag = useMemo(() => {
+    const found = findCountryByPhone(phoneDialCode);
+    return found ? found.flag : '🌐';
+  }, [phoneDialCode]);
 
   useEffect(() => {
     if (passenger && (mode === 'edit' || mode === 'view')) {
+      const parsed = parsePhone(passenger.phone);
+      setPhoneDialCode(parsed.dialCode);
+      setDialSearchQuery(parsed.dialCode);
+      setPhoneLocalNumber(parsed.localNumber);
       setFormData({
         firstName: passenger.firstName || '',
         lastName: passenger.lastName || '',
         email: passenger.email || '',
         phone: passenger.phone || '',
         passportNumber: passenger.passportNumber || '',
+        passportExpiryDate: passenger.passportExpiryDate || '',
+        passportIssuingCountry: passenger.passportIssuingCountry || '',
         nationality: passenger.nationality || '',
         dateOfBirth: passenger.dateOfBirth || '',
         banReason: passenger.banReason || '',
@@ -86,12 +162,17 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
         imageUrl: passenger.imageUrl || '',
       });
     } else if (mode === 'create') {
+      setPhoneDialCode('+228');
+      setDialSearchQuery('+228');
+      setPhoneLocalNumber('');
       setFormData({
         firstName: '',
         lastName: '',
         email: '',
         phone: '',
         passportNumber: '',
+        passportExpiryDate: '',
+        passportIssuingCountry: '',
         nationality: 'Togo',
         dateOfBirth: '',
         banReason: '',
@@ -107,38 +188,116 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
     }
   }, [passenger, mode, isOpen]);
 
- const handleImageFileChange = async ( e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  setUploadingImage(true);
-  try {
-    const res = await passengerService.uploadPassengerImage(file);
-    if (!res.imageUrl) {
-      console.error("L'URL de l'image est absente de la réponse du serveur.");
-      return;
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingImage(true);
+    try {
+      const res = await passengerService.uploadPassengerImage(file);
+      setFormData((prev) => ({ ...prev, imageUrl: res.imageUrl }));
+    } catch (err: any) {
+      console.error('Image upload failed', err);
+    } finally {
+      setUploadingImage(false);
     }
-    setFormData((prev) => ({...prev, imageUrl: res.imageUrl, }));
-  } catch (err: any) {
-    console.error("Image upload failed", err);
-  } finally {
-    setUploadingImage(false);
-  }
-};
+  };
+
+  const handleSelectDialCode = (item: CountryDialCode) => {
+    setPhoneDialCode(item.code);
+    setDialSearchQuery(item.code);
+    setIsDialDropdownOpen(false);
+    const maxLocalLength = Math.max(0, 20 - item.code.length - 1);
+    const trimmedLocal = phoneLocalNumber.slice(0, maxLocalLength);
+    setPhoneLocalNumber(trimmedLocal);
+    const combined = trimmedLocal ? `${item.code} ${trimmedLocal}`.trim() : item.code;
+    setFormData((prev) => ({ ...prev, phone: combined }));
+    if (errors.phone) setErrors((prev) => ({ ...prev, phone: '' }));
+  };
+
+  const handleDialCodeInput = (inputVal: string) => {
+    // Keep + and digits
+    let cleaned = inputVal.replace(/[^\d+]/g, '');
+    if (cleaned && !cleaned.startsWith('+')) {
+      cleaned = '+' + cleaned;
+    }
+    // Limit dial code length to max 6 chars (e.g., +1234)
+    cleaned = cleaned.slice(0, 6);
+    setDialSearchQuery(cleaned);
+    setPhoneDialCode(cleaned || '+');
+    setIsDialDropdownOpen(true);
+
+    const codeToUse = cleaned || '+';
+    const maxLocalLength = Math.max(0, 20 - codeToUse.length - 1);
+    const trimmedLocal = phoneLocalNumber.slice(0, maxLocalLength);
+    setPhoneLocalNumber(trimmedLocal);
+    const combined = trimmedLocal ? `${codeToUse} ${trimmedLocal}`.trim() : codeToUse;
+    setFormData((prev) => ({ ...prev, phone: combined }));
+    if (errors.phone) setErrors((prev) => ({ ...prev, phone: '' }));
+  };
+
+  const handleLocalPhoneChange = (val: string) => {
+    const sanitized = val.replace(/[^\d\s-]/g, '');
+    const maxLen = Math.max(0, 20 - phoneDialCode.length - 1);
+    const truncated = sanitized.slice(0, maxLen);
+    setPhoneLocalNumber(truncated);
+    const combined = truncated ? `${phoneDialCode} ${truncated}`.trim() : phoneDialCode;
+    setFormData((prev) => ({ ...prev, phone: combined }));
+    if (errors.phone) setErrors((prev) => ({ ...prev, phone: '' }));
+  };
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
-    if (!formData.firstName.trim()) newErrors.firstName = 'Le prénom est requis';
-    if (!formData.lastName.trim()) newErrors.lastName = 'Le nom de famille est requis';
-    if (!formData.passportNumber.trim()) newErrors.passportNumber = 'Le numéro de passeport est requis';
+
+    if (!formData.firstName.trim()) {
+      newErrors.firstName = 'Le prénom est requis';
+    } else if (formData.firstName.trim().length > 50) {
+      newErrors.firstName = 'Le prénom ne doit pas dépasser 50 caractères (limite BD)';
+    }
+
+    if (!formData.lastName.trim()) {
+      newErrors.lastName = 'Le nom de famille est requis';
+    } else if (formData.lastName.trim().length > 50) {
+      newErrors.lastName = 'Le nom de famille ne doit pas dépasser 50 caractères (limite BD)';
+    }
+
+    if (!formData.passportNumber.trim()) {
+      newErrors.passportNumber = 'Le numéro de passeport est requis';
+    } else if (formData.passportNumber.trim().length > 20) {
+      newErrors.passportNumber = 'Le numéro de passeport ne doit pas dépasser 20 caractères (limite BD)';
+    }
+
     if (!formData.dateOfBirth) newErrors.dateOfBirth = 'La date de naissance est requise';
-    if (!formData.nationality.trim()) newErrors.nationality = 'La nationalité est requise';
-    if (!formData.banReason.trim()) newErrors.banReason = 'Le motif du signalement est obligatoire';
-    if (!formData.banDate) newErrors.banDate = 'La date d\'interdiction est requise';
+
+    if (!formData.nationality.trim()) {
+      newErrors.nationality = 'La nationalité est requise';
+    } else if (formData.nationality.trim().length > 50) {
+      newErrors.nationality = 'La nationalité ne doit pas dépasser 50 caractères (limite BD)';
+    }
+
+    if (!formData.banReason.trim()) {
+      newErrors.banReason = 'Le motif du signalement est obligatoire';
+    } else if (formData.banReason.trim().length > 1000) {
+      newErrors.banReason = 'Le motif ne doit pas dépasser 1000 caractères (limite BD)';
+    }
+
+    if (formData.banDate && !formData.banDate) {
+      newErrors.banDate = 'La date d\'interdiction est requise';
+    }
+
     if (formData.banDuration === 'TEMPORARY' && !formData.banEndDate) {
       newErrors.banEndDate = 'La date de fin est obligatoire pour une interdiction temporaire';
     }
-    if (formData.email && !/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Format d\'adresse email invalide';
+
+    if (formData.phone && formData.phone.length > 20) {
+      newErrors.phone = 'Le numéro de téléphone ne doit pas dépasser 20 caractères (limite BD)';
+    }
+
+    if (formData.email) {
+      if (formData.email.trim().length > 100) {
+        newErrors.email = 'L\'adresse email ne doit pas dépasser 100 caractères (limite BD)';
+      } else if (!/\S+@\S+\.\S+/.test(formData.email.trim())) {
+        newErrors.email = 'Format d\'adresse email invalide';
+      }
     }
 
     setErrors(newErrors);
@@ -241,6 +400,9 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
           {/* Header */}
           <div className="px-6 py-5 bg-gradient-to-r from-slate-900 via-amber-950 to-slate-900 text-white flex items-center justify-between border-b border-amber-500/20 shrink-0">
             <div className="flex items-center space-x-3">
+              <div className="p-2.5 rounded-2xl bg-amber-500/20 border border-amber-400/30 text-amber-400">
+                <Shield className="w-6 h-6" />
+              </div>
               <div>
                 <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
                   {mode === 'create'
@@ -297,7 +459,7 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
                       <label className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center text-white cursor-pointer transition p-2">
                         <Upload className="w-5 h-5 mb-1 text-amber-400" />
                         <span className="text-[10px] font-bold text-center">
-                          {uploadingImage ? t('profile.uploading') : t('profile.uploadPicture')}
+                          {uploadingImage ? 'Téléversement...' : 'Ajouter / Modifier photo'}
                         </span>
                         <input type="file" accept="image/*" onChange={handleImageFileChange} className="hidden" />
                       </label>
@@ -309,11 +471,17 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
                 <div className="md:col-span-9 grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* Prénom */}
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                      {t('common.prenom')} *
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                        {t('common.prenom')} *
+                      </label>
+                      <span className="text-[10px] text-gray-400 font-mono">
+                        {formData.firstName.length}/50
+                      </span>
+                    </div>
                     <input
                       type="text"
+                      maxLength={50}
                       placeholder="Ex: Koffi Messan"
                       value={formData.firstName}
                       onChange={(e) => handleInputChange('firstName', e.target.value)}
@@ -329,11 +497,17 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
 
                   {/* Nom */}
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                      {t('common.name')} *
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                        {t('common.name')} *
+                      </label>
+                      <span className="text-[10px] text-gray-400 font-mono">
+                        {formData.lastName.length}/50
+                      </span>
+                    </div>
                     <input
                       type="text"
+                      maxLength={50}
                       placeholder="Ex: ADJIBADE"
                       value={formData.lastName}
                       onChange={(e) => handleInputChange('lastName', e.target.value)}
@@ -349,11 +523,17 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
 
                   {/* Passeport */}
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                      {t('passengers.passnumder')} *
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                        {t('passengers.passnumder')} *
+                      </label>
+                      <span className="text-[10px] text-gray-400 font-mono">
+                        {formData.passportNumber.length}/20
+                      </span>
+                    </div>
                     <input
                       type="text"
+                      maxLength={20}
                       placeholder="Ex: TG982341"
                       value={formData.passportNumber}
                       onChange={(e) => handleInputChange('passportNumber', e.target.value.toUpperCase())}
@@ -367,6 +547,130 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
                     {errors.passportNumber && (
                       <p className="text-red-500 text-[11px] mt-1">{errors.passportNumber}</p>
                     )}
+                  </div>
+
+                  {/* Date d'expiration du passeport (facultatif) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                        {t('passengers.passportExpiryDate') || "Date d'expiration du passeport"}
+                      </label>
+                      <span className="text-[10px] text-gray-400 italic">
+                        ({t('passengers.optional') || 'facultatif'})
+                      </span>
+                    </div>
+                    <input
+                      type="date"
+                      value={formData.passportExpiryDate}
+                      onChange={(e) => handleInputChange('passportExpiryDate', e.target.value)}
+                      disabled={isReadOnly}
+                      className="w-full px-3.5 py-2 text-xs sm:text-sm rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 font-mono text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  {/* Pays de délivrance du passeport (facultatif) avec drapeaux et mode sombre */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                        {t('passengers.passportIssuingCountry') || 'Pays de délivrance'}
+                      </label>
+                      <span className="text-[10px] text-gray-400 italic">
+                        ({t('passengers.optional') || 'facultatif'})
+                      </span>
+                    </div>
+                    <Select
+                      options={countryOptions}
+                      value={countryOptions.find((opt: any) => opt.label === formData.passportIssuingCountry)}
+                      onChange={(val: any) => handleInputChange('passportIssuingCountry', val ? val.label : '')}
+                      isDisabled={isReadOnly}
+                      isClearable={!isReadOnly}
+                      placeholder="Sélectionner le pays émetteur..."
+                      className="text-xs"
+                      formatOptionLabel={(option: any) => (
+                        <div className="flex items-center gap-2">
+                          <span className="text-base leading-none">{option.flag}</span>
+                          <span className="truncate">{option.label}</span>
+                        </div>
+                      )}
+                      styles={{
+                        control: (base, state) => ({
+                          ...base,
+                          borderRadius: '0.75rem',
+                          borderColor: isDarkMode
+                            ? state.isFocused
+                              ? '#f59e0b'
+                              : '#374151'
+                            : state.isFocused
+                            ? '#f59e0b'
+                            : '#d1d5db',
+                          backgroundColor: isDarkMode ? '#1f2937' : '#f9fafb',
+                          color: isDarkMode ? '#ffffff' : '#111827',
+                          padding: '1px',
+                          boxShadow: state.isFocused
+                            ? '0 0 0 2px rgba(245, 158, 11, 0.2)'
+                            : 'none',
+                          '&:hover': {
+                            borderColor: '#f59e0b',
+                          },
+                        }),
+                        singleValue: (base) => ({
+                          ...base,
+                          color: isDarkMode ? '#f3f4f6' : '#111827',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                        }),
+                        input: (base) => ({
+                          ...base,
+                          color: isDarkMode ? '#ffffff' : '#111827',
+                        }),
+                        placeholder: (base) => ({
+                          ...base,
+                          color: isDarkMode ? '#9ca3af' : '#6b7280',
+                        }),
+                        menu: (base) => ({
+                          ...base,
+                          backgroundColor: isDarkMode ? '#1f2937' : '#ffffff',
+                          borderRadius: '0.75rem',
+                          border: isDarkMode ? '1px solid #374151' : '1px solid #e5e7eb',
+                          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.2)',
+                          zIndex: 9999,
+                          overflow: 'hidden',
+                        }),
+                        menuList: (base) => ({
+                          ...base,
+                          padding: '4px',
+                          maxHeight: '220px',
+                          backgroundColor: isDarkMode ? '#1f2937' : '#ffffff',
+                        }),
+                        option: (base, state) => ({
+                          ...base,
+                          backgroundColor: state.isSelected
+                            ? isDarkMode
+                              ? '#374151'
+                              : '#fef3c7'
+                            : state.isFocused
+                            ? isDarkMode
+                              ? '#2d3748'
+                              : '#fef3c7'
+                            : 'transparent',
+                          color: state.isSelected
+                            ? isDarkMode
+                              ? '#f59e0b'
+                              : '#b45309'
+                            : isDarkMode
+                            ? '#f3f4f6'
+                            : '#1f2937',
+                          cursor: 'pointer',
+                          borderRadius: '0.5rem',
+                          padding: '6px 10px',
+                          fontSize: '0.75rem',
+                          '&:active': {
+                            backgroundColor: isDarkMode ? '#4b5563' : '#fde68a',
+                          },
+                        }),
+                      }}
+                    />
                   </div>
 
                   {/* Date de naissance */}
@@ -388,56 +692,222 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
                     {errors.dateOfBirth && <p className="text-red-500 text-[11px] mt-1">{errors.dateOfBirth}</p>}
                   </div>
 
-                  {/* Nationalité */}
+                  {/* Nationalité avec drapeau et support mode sombre */}
                   <div>
                     <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
                       {t('passengers.nationality')} *
                     </label>
                     <Select
                       options={countryOptions}
-                      value={countryOptions.find((opt) => opt.label === formData.nationality)}
+                      value={countryOptions.find((opt: any) => opt.label === formData.nationality)}
                       onChange={(val: any) => handleInputChange('nationality', val ? val.label : '')}
                       isDisabled={isReadOnly}
                       placeholder="Sélectionner le pays..."
                       className="text-xs"
+                      formatOptionLabel={(option: any) => (
+                        <div className="flex items-center gap-2">
+                          <span className="text-base leading-none">{option.flag}</span>
+                          <span className="truncate">{option.label}</span>
+                        </div>
+                      )}
                       styles={{
-                        control: (base) => ({
+                        control: (base, state) => ({
                           ...base,
                           borderRadius: '0.75rem',
-                          borderColor: errors.nationality ? '#ef4444' : '#d1d5db',
-                          backgroundColor: 'rgba(249, 250, 251, 1)',
+                          borderColor: errors.nationality
+                            ? '#ef4444'
+                            : isDarkMode
+                            ? state.isFocused
+                              ? '#f59e0b'
+                              : '#374151'
+                            : state.isFocused
+                            ? '#f59e0b'
+                            : '#d1d5db',
+                          backgroundColor: isDarkMode ? '#1f2937' : '#f9fafb',
+                          color: isDarkMode ? '#ffffff' : '#111827',
                           padding: '1px',
+                          boxShadow: state.isFocused
+                            ? '0 0 0 2px rgba(245, 158, 11, 0.2)'
+                            : 'none',
+                          '&:hover': {
+                            borderColor: errors.nationality ? '#ef4444' : '#f59e0b',
+                          },
+                        }),
+                        singleValue: (base) => ({
+                          ...base,
+                          color: isDarkMode ? '#f3f4f6' : '#111827',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem',
+                        }),
+                        input: (base) => ({
+                          ...base,
+                          color: isDarkMode ? '#ffffff' : '#111827',
+                        }),
+                        placeholder: (base) => ({
+                          ...base,
+                          color: isDarkMode ? '#9ca3af' : '#6b7280',
+                        }),
+                        menu: (base) => ({
+                          ...base,
+                          backgroundColor: isDarkMode ? '#1f2937' : '#ffffff',
+                          borderRadius: '0.75rem',
+                          border: isDarkMode ? '1px solid #374151' : '1px solid #e5e7eb',
+                          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.2)',
+                          zIndex: 9999,
+                          overflow: 'hidden',
+                        }),
+                        menuList: (base) => ({
+                          ...base,
+                          padding: '4px',
+                          maxHeight: '220px',
+                          backgroundColor: isDarkMode ? '#1f2937' : '#ffffff',
+                        }),
+                        option: (base, state) => ({
+                          ...base,
+                          backgroundColor: state.isSelected
+                            ? isDarkMode
+                              ? '#374151'
+                              : '#fef3c7'
+                            : state.isFocused
+                            ? isDarkMode
+                              ? '#2d3748'
+                              : '#fef3c7'
+                            : 'transparent',
+                          color: state.isSelected
+                            ? isDarkMode
+                              ? '#f59e0b'
+                              : '#b45309'
+                            : isDarkMode
+                            ? '#f3f4f6'
+                            : '#1f2937',
+                          cursor: 'pointer',
+                          borderRadius: '0.5rem',
+                          padding: '6px 10px',
+                          fontSize: '0.75rem',
+                          '&:active': {
+                            backgroundColor: isDarkMode ? '#4b5563' : '#fde68a',
+                          },
                         }),
                       }}
                     />
                     {errors.nationality && <p className="text-red-500 text-[11px] mt-1">{errors.nationality}</p>}
                   </div>
 
-                  {/* Téléphone */}
+                  {/* Téléphone avec saisie manuelle de l'indicatif & propositions en temps réel avec drapeaux */}
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                      {t('common.phone')}
-                    </label>
-                    <input
-                      type="tel"
-                      placeholder="Ex: +228 90 00 00 00"
-                      value={formData.phone}
-                      onChange={(e) => handleInputChange('phone', e.target.value)}
-                      disabled={isReadOnly}
-                      className="w-full px-3.5 py-2 text-xs sm:text-sm rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                        {t('common.phone')}
+                      </label>
+                      <span className="text-[10px] text-gray-400 font-mono">
+                        {formData.phone ? formData.phone.length : 0}/20
+                      </span>
+                    </div>
+                    {isReadOnly ? (
+                      <p className="px-3.5 py-2 text-xs sm:text-sm rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 text-gray-900 dark:text-white">
+                        {formData.phone || 'Non renseigné'}
+                      </p>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        {/* Combobox pour l'indicatif international avec recherche et saisie directe */}
+                        <div className="relative w-36 shrink-0" ref={dialDropdownRef}>
+                          <div className="flex items-center rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 focus-within:ring-2 focus-within:ring-amber-500 focus-within:border-amber-500 px-2 py-1.5 transition-colors">
+                            <span className="text-base select-none mr-1.5 shrink-0" title="Drapeau du pays">
+                              {currentDialFlag}
+                            </span>
+                            <input
+                              type="text"
+                              value={dialSearchQuery}
+                              onChange={(e) => handleDialCodeInput(e.target.value)}
+                              onFocus={() => setIsDialDropdownOpen(true)}
+                              placeholder="+228"
+                              className="w-full bg-transparent text-xs font-mono font-medium text-gray-900 dark:text-white focus:outline-none placeholder-gray-400"
+                              title="Saisir un indicatif pays (ex: +228, +33, +1...)"
+                            />
+                            <button
+                              type="button"
+                              tabIndex={-1}
+                              onClick={() => setIsDialDropdownOpen((prev) => !prev)}
+                              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 ml-1 p-0.5"
+                            >
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isDialDropdownOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                          </div>
+
+                          {/* Menu des propositions filtrées */}
+                          {isDialDropdownOpen && (
+                            <div className="absolute left-0 mt-1 w-64 max-h-56 overflow-y-auto rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xl z-50 py-1 divide-y divide-gray-100 dark:divide-gray-700/50">
+                              <div className="px-2.5 py-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                                <span>Indicatifs ({filteredDialCodes.length})</span>
+                                <Search className="w-3 h-3 text-gray-400" />
+                              </div>
+                              <div className="max-h-48 overflow-y-auto">
+                                {filteredDialCodes.length === 0 ? (
+                                  <div className="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 text-center">
+                                    Aucun pays trouvé
+                                  </div>
+                                ) : (
+                                  filteredDialCodes.map((item) => (
+                                    <button
+                                      key={`${item.code}-${item.iso}`}
+                                      type="button"
+                                      onClick={() => handleSelectDialCode(item)}
+                                      className={`w-full text-left px-2.5 py-1.5 text-xs flex items-center justify-between transition-colors hover:bg-amber-50 dark:hover:bg-amber-500/10 ${
+                                        phoneDialCode === item.code
+                                          ? 'bg-amber-50 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 font-medium'
+                                          : 'text-gray-800 dark:text-gray-200'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-2 truncate pr-2">
+                                        <span className="text-base leading-none">{item.flag}</span>
+                                        <span className="truncate">{item.name}</span>
+                                      </div>
+                                      <span className="font-mono text-[11px] font-semibold text-gray-600 dark:text-gray-300 shrink-0">
+                                        {item.code}
+                                      </span>
+                                    </button>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Champ numéro local */}
+                        <input
+                          type="tel"
+                          placeholder="90 00 00 00"
+                          value={phoneLocalNumber}
+                          maxLength={Math.max(0, 20 - phoneDialCode.length - 1)}
+                          onChange={(e) => handleLocalPhoneChange(e.target.value)}
+                          className={`w-full px-3.5 py-2 text-xs sm:text-sm rounded-xl bg-gray-50 dark:bg-gray-800 border ${
+                            errors.phone
+                              ? 'border-red-500 ring-1 ring-red-500'
+                              : 'border-gray-300 dark:border-gray-700'
+                          } text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500`}
+                        />
+                      </div>
+                    )}
+                    {errors.phone && <p className="text-red-500 text-[11px] mt-1">{errors.phone}</p>}
                   </div>
 
                   {/* Email */}
                   <div className="sm:col-span-2">
-                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                      {t('common.email')}
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                        {t('common.email')}
+                      </label>
+                      <span className="text-[10px] text-gray-400 font-mono">
+                        {formData.email.length}/100
+                      </span>
+                    </div>
                     <input
                       type="email"
+                      maxLength={100}
                       placeholder="Ex: passager@exemple.com"
                       value={formData.email}
-                      onChange={(e) => handleInputChange('email', e.target.value)}
+                      onChange={(e) => handleInputChange('email', e.target.value.toLowerCase())}
                       disabled={isReadOnly}
                       className={`w-full px-3.5 py-2 text-xs sm:text-sm rounded-xl bg-gray-50 dark:bg-gray-800 border ${
                         errors.email ? 'border-red-500' : 'border-gray-300 dark:border-gray-700'
@@ -616,11 +1086,17 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
 
               {/* Motif principal */}
               <div>
-                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                  {t('modal.officialReason')}
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                    {t('modal.officialReason')} *
+                  </label>
+                  <span className="text-[10px] text-gray-400 font-mono">
+                    {formData.banReason.length}/1000
+                  </span>
+                </div>
                 <textarea
                   rows={3}
+                  maxLength={1000}
                   value={formData.banReason}
                   onChange={(e) => handleInputChange('banReason', e.target.value)}
                   disabled={isReadOnly}
@@ -636,11 +1112,17 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
 
               {/* Notes supplémentaires */}
               <div>
-                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                  {t('modal.confidentialNotes')}
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                    {t('modal.confidentialNotes')}
+                  </label>
+                  <span className="text-[10px] text-gray-400 font-mono">
+                    {formData.notes.length}/2000
+                  </span>
+                </div>
                 <textarea
                   rows={2}
+                  maxLength={2000}
                   value={formData.notes}
                   onChange={(e) => handleInputChange('notes', e.target.value)}
                   disabled={isReadOnly}

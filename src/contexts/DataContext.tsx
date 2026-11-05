@@ -20,6 +20,8 @@ export interface BannedPassenger {
   email: string;
   phone: string;
   passportNumber: string;
+  passportExpiryDate?: string;
+  passportIssuingCountry?: string;
   nationality: string;
   dateOfBirth: string;
   banReason: string;
@@ -38,7 +40,7 @@ export interface SystemUser {
   id: string;
   name: string;
   email: string;
-  role: 'admin' | 'user';
+  role: 'admin' | 'user' | 'super-admin';
   status: 'active' | 'inactive';
   createdAt: string;
   lastLogin: string;
@@ -112,6 +114,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     email: apiPassenger.email,
     phone: apiPassenger.phone,
     passportNumber: apiPassenger.passportNumber,
+    passportExpiryDate: apiPassenger.passportExpiryDate,
+    passportIssuingCountry: apiPassenger.passportIssuingCountry,
     nationality: apiPassenger.nationality,
     dateOfBirth: apiPassenger.dateOfBirth,
     banReason: apiPassenger.banReason,
@@ -126,17 +130,22 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     imageUrl: apiPassenger.imageUrl,
   });
 
-  const convertApiUserToLocal = (apiUser: ApiUser): SystemUser => ({
-    id: apiUser.id.toString(),
-    name: apiUser.name,
-    email: apiUser.email,
-    role: (apiUser.role?.toLowerCase() as 'admin' | 'user') || 'user',
-    status: (apiUser.status?.toLowerCase() as 'active' | 'inactive') || 'active',
-    createdAt: apiUser.createdAt || '',
-    lastLogin: apiUser.lastLogin || '',
-    avatarurl: apiUser.avatarUrl,
-    mfaEnabled: apiUser.mfaEnabled || false,
-  });
+  const convertApiUserToLocal = (apiUser: ApiUser): SystemUser => {
+    const rawRole = (apiUser.role || '').toLowerCase().replace(/_/g, '-');
+    const role: 'admin' | 'user' | 'super-admin' =
+      rawRole === 'super-admin' ? 'super-admin' : rawRole === 'admin' ? 'admin' : 'user';
+    return {
+      id: apiUser.id.toString(),
+      name: apiUser.name,
+      email: apiUser.email,
+      role,
+      status: (apiUser.status?.toLowerCase() as 'active' | 'inactive') || 'active',
+      createdAt: apiUser.createdAt || '',
+      lastLogin: apiUser.lastLogin || '',
+      avatarurl: apiUser.avatarUrl,
+      mfaEnabled: apiUser.mfaEnabled || false,
+    };
+  };
 
   const convertApiActivityToLocal = (log: ApiActivityLog): ActivityLog => ({
     id: log.id ? log.id.toString() : Math.random().toString(),
@@ -237,6 +246,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         email: updates.email,
         phone: updates.phone,
         passportNumber: updates.passportNumber,
+        passportExpiryDate: updates.passportExpiryDate,
+        passportIssuingCountry: updates.passportIssuingCountry,
         nationality: updates.nationality,
         dateOfBirth: updates.dateOfBirth,
         banReason: updates.banReason,
@@ -298,11 +309,13 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const addUser = async (user: Omit<SystemUser, 'id' | 'createdAt' | 'lastLogin'> & { password: string }) => {
     try {
       setError(null);
+      const roleUpper: 'USER' | 'ADMIN' | 'SUPER_ADMIN' =
+        user.role === 'super-admin' ? 'SUPER_ADMIN' : user.role === 'admin' ? 'ADMIN' : 'USER';
       const createUserRequest: CreateUserRequest = {
         name: user.name,
         email: user.email,
         password: user.password,
-        role: user.role.toUpperCase() as 'USER' | 'ADMIN',
+        role: roleUpper,
         status: user.status.toUpperCase() as 'ACTIVE' | 'INACTIVE',
         avatarUrl: user.avatarurl,
         mfaEnabled: user.mfaEnabled,
@@ -315,7 +328,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         await auditService.recordLog({
           action: 'USER_CREATED',
           category: 'USERS',
-          description: `Création du compte utilisateur: ${user.name} (${user.email}) - Rôle: ${user.role.toUpperCase()}`,
+          description: `Création du compte utilisateur: ${user.name} (${user.email}) - Rôle: ${roleUpper}`,
           targetResource: user.email,
           status: 'SUCCESS',
         });
@@ -331,10 +344,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const updateUser = async (id: string, updates: Partial<SystemUser> & { password?: string }) => {
     try {
       setError(null);
+      const roleUpper: 'USER' | 'ADMIN' | 'SUPER_ADMIN' | undefined = updates.role
+        ? updates.role === 'super-admin'
+          ? 'SUPER_ADMIN'
+          : updates.role === 'admin'
+          ? 'ADMIN'
+          : 'USER'
+        : undefined;
       const apiUpdates: any = {
         name: updates.name,
         email: updates.email,
-        role: updates.role?.toUpperCase() as 'USER' | 'ADMIN',
+        role: roleUpper,
         status: updates.status?.toUpperCase() as 'ACTIVE' | 'INACTIVE',
         avatarUrl: updates.avatarurl,
         mfaEnabled: updates.mfaEnabled,

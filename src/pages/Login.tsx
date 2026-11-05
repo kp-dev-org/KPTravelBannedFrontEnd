@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, Mail, Eye, EyeOff, Server, AlertCircle, Settings, Clock, X, KeyRound, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { Lock, Mail, Eye, EyeOff, Server, AlertCircle, Clock, X, KeyRound, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
@@ -15,8 +15,6 @@ function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [step, setStep] = useState<'login' | 'FLYASKY_OTP'>('login');
-  const [showConfigModal, setShowConfigModal] = useState(false);
-
   // Éléments du challenge FlyAsky (Étape 2)
   const [challengeId, setChallengeId] = useState('');
   const [otpNotice, setOtpNotice] = useState('');
@@ -38,41 +36,51 @@ function Login() {
     e.preventDefault();
     setLoading(true);
     setError('');
-    const response = await login(email, password);
+
+    const cleanEmail = email.trim().toLowerCase();
+    setEmail(cleanEmail);
+    const response = await login(cleanEmail, password);
 
     // Challenge temporaire créé côté Spring Boot -> passage à la saisie de l'OTP FlyAsky
-    if (response.success && response.challengeRequired && response.challengeId) {
+    if (response.challengeRequired && response.challengeId) {
       setChallengeId(response.challengeId);
-      setOtpNotice(response.message);
-      setStep(response.step || 'FLYASKY_OTP');
+      setOtpNotice(response.message || `Code OTP FlyAsky envoyé à ${cleanEmail}`);
+      setStep('FLYASKY_OTP');
       setCode('');
       setLoading(false);
       return;
     }
-    setError( t('login.error') );
+    if (response.success) {
+      navigate('/');
+      return;
+    }
+    setError(response.error || t('login.error') || 'Identifiants incorrects');
     setLoading(false);
   };
-
 
   // ÉTAPE 2 : Validation du code OTP FlyAsky (appel 100% via Spring Boot)
   const handleVerifyFlyAskyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!code.trim()) {
-      setError(t('login.otpCodeRequired'));
+      setError('Veuillez renseigner le code OTP reçu par e-mail.');
       return;
     }
     setLoading(true);
     setError('');
-    const response = await verifyFlyAskyOtp(challengeId, email, code.trim());
+
+    const cleanEmail = email.trim().toLowerCase();
+    const response = await verifyFlyAskyOtp(challengeId, cleanEmail, code.trim());
+
     if (response.success) {
       navigate('/');
     } else {
-      setError( t('login.otpInvalid'));
+      setError(response.error || 'Code OTP FlyAsky incorrect ou expiré.');
     }
+
     setLoading(false);
   };
 
-  // Renvoyer un code OTP FlyAsky
+  // Renvoyer un code OTP FlyAsky via le backend Spring Boot
   const handleResendOtp = async () => {
     if (resendCooldown > 0 || !challengeId) return;
     setLoading(true);
@@ -85,6 +93,7 @@ function Login() {
     } else {
       setError(res.message || "Erreur lors du renvoi de l'OTP.");
     }
+
     setLoading(false);
   };
 
@@ -191,7 +200,7 @@ function Login() {
                 disabled={loading}
                 className="w-full flex justify-center items-center py-2.5 px-4 rounded-xl text-sm font-semibold text-gray-900 bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-300 hover:to-amber-400 focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 shadow-md hover:shadow-lg disabled:opacity-50 transition-all cursor-pointer"
               >
-                {loading ? t('common.loading') : t('login.signin')}
+                {loading ? t('login.signing') : t('login.signin')}
               </button>
             </form>
           )}
