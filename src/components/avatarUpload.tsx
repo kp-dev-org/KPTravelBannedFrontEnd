@@ -25,13 +25,11 @@ function AvatarUpload({ currentAvatar, userName, onAvatarChange, disabled = fals
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      // Vérifier le type de fichier
       if (!file.type.startsWith('image/')) {
         alert('Please select a valid image');
         return;
       }
-
-      // Vérifier la taille (max 5MB)
+      
       if (file.size > 5 * 1024 * 1024) {
         alert('The image must not exceed 5MB');
         return;
