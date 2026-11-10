@@ -37,7 +37,7 @@ export interface BannedPassenger {
 }
 
 export interface SystemUser {
-  id: string;
+  id?: string;
   name: string;
   email: string;
   role: 'admin' | 'user' | 'super-admin';
@@ -49,7 +49,7 @@ export interface SystemUser {
 }
 
 export interface ActivityLog {
-  id: string;
+  id?: string;
   eventType: string;
   description: string;
   userEmail: string;
@@ -135,7 +135,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const role: 'admin' | 'user' | 'super-admin' =
       rawRole === 'super-admin' ? 'super-admin' : rawRole === 'admin' ? 'admin' : 'user';
     return {
-      id: apiUser.id.toString(),
+      id: apiUser.id?.toString(),
       name: apiUser.name,
       email: apiUser.email,
       role,
@@ -241,6 +241,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     try {
       setError(null);
       const apiUpdates: any = {
+        id: updates.id,
         firstName: updates.firstName,
         lastName: updates.lastName,
         email: updates.email,
@@ -443,13 +444,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const checkPassportQuick = async (passportNumber: string): Promise<BannedPassenger | null> => {
     if (!passportNumber || !passportNumber.trim()) return null;
     const clean = passportNumber.trim().toUpperCase();
-
     // Vérifie d'abord dans les passagers déjà chargés
     const localFound = passengers.find(
       (p) => p.passportNumber.trim().toUpperCase() === clean
     );
     if (localFound) return localFound;
-
     // Sinon interroge directement l'endpoint Spring Boot /passengers/passport/{passportNumber}
     try {
       const apiPassenger = await passengerService.getPassengerByPassport(clean);

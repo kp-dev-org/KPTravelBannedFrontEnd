@@ -3,10 +3,10 @@ import { Shield, Calendar, Edit, Save, X, Eye, EyeOff, User, Lock, Check } from 
 import { useAuth } from '../contexts/AuthContext';
 import AvatarUpload from '../components/avatarUpload';
 import { useLanguage } from '../contexts/LanguageContext';
-import { userService } from '../services/Api';
+import { userService, fileService } from '../services/Api';
 
 function Profile() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const { t } = useLanguage();
   const [showPasswordChange, setShowPasswordChange] = useState(false);
@@ -30,14 +30,16 @@ function Profile() {
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
-    if (!formData.currentPassword) {
-      newErrors.currentpassword = 'Veuillez entrer votre mot de passe actuel';
-    }
-    if (formData.newPassword !== formData.confirmPassword) {
-      newErrors.newpassword = 'Les nouveaux mots de passe ne correspondent pas';
-    }
-    if (formData.newPassword && formData.newPassword.length < 6) {
-      newErrors.newpassword = 'Le mot de passe doit contenir au moins 6 caractères';
+    if (formData.newPassword) {
+      if (!formData.currentPassword) {
+        newErrors.currentpassword = t('profile.currentPasswordRequired');
+      }
+      if (formData.newPassword !== formData.confirmPassword) {
+        newErrors.newpassword = t('profile.passwordsDoNotMatch');
+      }
+      if (formData.newPassword.length < 6) {
+        newErrors.newpassword = t('profile.passwordTooShort');
+      }
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -45,11 +47,16 @@ function Profile() {
 
   const handleAvatarChange = async (file: File) => {
     try {
-      const response = await userService.uploadAvatar(parseInt(user.id, 10), file);
-      const avatarUrl = response.avatarUrl;
+      const response = await userService.uploadAvatarForNewUser(file);
+      const avatarUrl = response.avatarUrl || (response as any).url;
       setFormData((prev) => ({ ...prev, avatarurl: avatarUrl }));
     } catch {
-      setErrors((prev) => ({ ...prev, avatar: 'Impossible de mettre à jour l\'avatar sur le serveur Spring Boot' }));
+      try {
+        const url = await fileService.uploadUserAvatar(file);
+        setFormData((prev) => ({ ...prev, avatarurl: url }));
+      } catch {
+        setErrors((prev) => ({ ...prev, avatar: 'Impossible de mettre à jour l\'avatar sur le serveur' }));
+      }
     }
   };
 
@@ -57,18 +64,20 @@ function Profile() {
     if (validateForm()) {
       try {
         await userService.changePassword(
-          parseInt(user.id, 10),
+          user.email,
+          formData.name,
           formData.avatarurl,
-          formData.currentPassword,
-          formData.newPassword
+          formData.currentPassword || undefined,
+          formData.newPassword || undefined
         );
+        await refreshUser();
         setErrors({});
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2000);
         setShowPasswordChange(false);
         setIsEditing(false);
-      } catch {
-        setErrors({ currentpassword: 'Le mot de passe actuel est erroné' });
+      } catch (err: any) {
+        setErrors({ currentpassword: err.response?.data?.message || 'Erreur lors de la mise à jour du profil' });
       }
     }
   };
@@ -84,6 +93,7 @@ function Profile() {
     });
     setIsEditing(false);
     setShowPasswordChange(false);
+    setErrors({});
   };
 
   return (
@@ -175,8 +185,8 @@ function Profile() {
                     <input
                       type="text"
                       value={formData.name}
-                      readOnly
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white text-xs opacity-75"
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-xs focus:outline-none focus:ring-2 focus:ring-yellow-500"
                     />
                   ) : (
                     <p className="text-sm font-bold text-gray-900 dark:text-white py-1">{user.name}</p>

@@ -21,6 +21,7 @@ import {
   Upload,
   CheckCircle,
   FileSpreadsheet,
+  X,
 } from 'lucide-react';
 import { useData, BannedPassenger } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -67,6 +68,18 @@ function Passengers() {
   const templateMenuRef = useRef<HTMLDivElement | null>(null);
   const [isTemplateMenuOpen, setIsTemplateMenuOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [importSummaryReport, setImportSummaryReport] = useState<{
+    isOpen: boolean;
+    total: number;
+    successCount: number;
+    errorCount: number;
+    failedRows: Array<{
+      line: number;
+      passport: string;
+      name: string;
+      reason: string;
+    }>;
+  } | null>(null);
   const [notification, setNotification] = useState<{
     type: 'success' | 'error';
     message: string;
@@ -177,22 +190,42 @@ function Passengers() {
 
   const exportToCSV = () => {
     const csvContent = [
-      ['Nom', 'Prénom', 'Email', 'Téléphone', 'Passeport', 'Pays Délivrance Passeport', 'Expiration Passeport', 'Nationalité', 'Motif Interdiction', 'Date Interdiction', 'Fin Interdiction', 'Gravité', 'Statut'].join(';'),
+      [
+        'Nom',
+        'Prénom',
+        'Email',
+        'Téléphone',
+        'Passeport',
+        'Pays_Délivrance_Passeport',
+        'Expiration_Passeport',
+        'Nationalité',
+        'Date_Naissance',
+        'Motif_Bannissement',
+        'Date_Signalement',
+        'Type',
+        'Echeance',
+        'Gravite',
+        'Statut',
+        'Notes',
+      ].join(';'),
       ...filteredPassengers.map((p) =>
         [
-          `"${p.lastName}"`,
-          `"${p.firstName}"`,
-          `"${p.email}"`,
-          `"${p.phone}"`,
-          `"${p.passportNumber}"`,
+          `"${p.lastName || ''}"`,
+          `"${p.firstName || ''}"`,
+          `"${p.email || ''}"`,
+          `"${p.phone || ''}"`,
+          `"${p.passportNumber || ''}"`,
           `"${p.passportIssuingCountry || ''}"`,
           `"${p.passportExpiryDate || ''}"`,
-          `"${p.nationality}"`,
+          `"${p.nationality || ''}"`,
+          `"${p.dateOfBirth || ''}"`,
           `"${(p.banReason || '').replace(/"/g, '""')}"`,
-          `"${p.banDate}"`,
+          `"${p.banDate || ''}"`,
+          `"${p.banDuration || 'TEMPORARY'}"`,
           `"${p.banEndDate || ''}"`,
-          `"${p.severity}"`,
-          `"${p.status}"`,
+          `"${p.severity || 'MEDIUM'}"`,
+          `"${p.status || 'ACTIVE'}"`,
+          `"${(p.notes || '').replace(/"/g, '""')}"`,
         ].join(';')
       ),
     ].join('\n');
@@ -203,26 +236,28 @@ function Passengers() {
     a.href = url;
     a.download = `Passagers_Interdits_ASKY_${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
+    window.URL.revokeObjectURL(url);
   };
 
   const exportToExcel = () => {
     const worksheet = XLSX.utils.json_to_sheet(
       filteredPassengers.map((p) => ({
-        Nom: p.lastName,
-        Prénom: p.firstName,
-        Passeport: p.passportNumber,
-        Pays_Délivrance_Passeport: p.passportIssuingCountry || 'N/A',
-        Expiration_Passeport: p.passportExpiryDate || 'N/A',
-        Nationalité: p.nationality,
-        Date_Naissance: p.dateOfBirth,
-        Motif_Bannissement: p.banReason,
-        Date_Signalement: p.banDate,
-        Type: p.banDuration,
-        Echeance: p.banEndDate || 'N/A',
-        Gravite: p.severity,
-        Statut: p.status,
-        Agent_Rapporteur: p.createdBy,
-        Notes: p.notes,
+        Nom: p.lastName || '',
+        Prénom: p.firstName || '',
+        Email: p.email || '',
+        Téléphone: p.phone || '',
+        Passeport: p.passportNumber || '',
+        Pays_Délivrance_Passeport: p.passportIssuingCountry || '',
+        Expiration_Passeport: p.passportExpiryDate || '',
+        Nationalité: p.nationality || '',
+        Date_Naissance: p.dateOfBirth || '',
+        Motif_Bannissement: p.banReason || '',
+        Date_Signalement: p.banDate || '',
+        Type: p.banDuration || 'TEMPORARY',
+        Echeance: p.banEndDate || '',
+        Gravite: p.severity || 'MEDIUM',
+        Statut: p.status || 'ACTIVE',
+        Notes: p.notes || '',
       }))
     );
     const workbook = XLSX.utils.book_new();
@@ -269,7 +304,7 @@ function Passengers() {
         .replace(/[^a-z0-9]/g, '');
       if (row[normalizedKey] !== undefined && row[normalizedKey] !== null) {
         const val = String(row[normalizedKey]).trim();
-        if (val !== '' && val !== 'null' && val !== 'undefined') {
+        if (val !== '' && val !== 'null' && val !== 'undefined' && val !== 'n/a' && val !== 'N/A') {
           return val;
         }
       }
@@ -292,6 +327,8 @@ function Passengers() {
       } catch {}
     }
     const str = String(val).trim();
+    if (!str || str === 'N/A' || str === 'n/a') return fallback;
+
     // Format DD/MM/YYYY ou DD-MM-YYYY
     const dmyMatch = str.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})$/);
     if (dmyMatch) {
@@ -308,6 +345,15 @@ function Passengers() {
       const d = ymdMatch[3].padStart(2, '0');
       return `${y}-${m}-${d}`;
     }
+
+    // Tentative avec Date standard si format ISO
+    try {
+      const parsedDate = new Date(str);
+      if (!isNaN(parsedDate.getTime()) && parsedDate.getFullYear() > 1900) {
+        return parsedDate.toISOString().split('T')[0];
+      }
+    } catch {}
+
     return str || fallback;
   };
 
@@ -320,19 +366,26 @@ function Passengers() {
     setIsImporting(true);
     let successCount = 0;
     let errorCount = 0;
-    const errorsList: string[] = [];
+    const failedRows: Array<{
+      line: number;
+      passport: string;
+      name: string;
+      reason: string;
+    }> = [];
     const today = new Date().toISOString().split('T')[0];
 
     for (let index = 0; index < rawRows.length; index++) {
       const item = rawRows[index];
       const row = normalizeRow(item);
 
-      // Extraction des champs avec prise en compte des variantes français/anglais
+      // Extraction des champs avec prise en compte des colonnes exactes de l'export et variantes
       const lastName = getRowValue(row, ['nom', 'lastname', 'familyname', 'nomdefamille', 'surname']);
       const firstName = getRowValue(row, ['prenom', 'firstname', 'givenname', 'prenoms']);
       const passportNumber = getRowValue(row, ['passeport', 'passport', 'passportnumber', 'nopasseport', 'numpasseport']).toUpperCase();
       const nationality = getRowValue(row, ['nationalite', 'nationality', 'pays', 'country']) || 'Togo';
-      const banReason = getRowValue(row, ['motif', 'motifinterdiction', 'motifbannissement', 'banreason', 'reason', 'motifprincipal']) || 'Signalement consigné lors de l\'import';
+      const banReason = getRowValue(row, ['motifbannissement', 'motifinterdiction', 'motif', 'banreason', 'reason', 'motifprincipal']) || 'Signalement consigné lors de l\'import';
+
+      const passengerDisplayName = `${firstName || ''} ${lastName || ''}`.trim() || 'Identité non renseignée';
 
       // Vérification minimale des champs obligatoires
       if (!lastName && !firstName && !passportNumber) {
@@ -342,7 +395,12 @@ function Passengers() {
 
       if (!passportNumber) {
         errorCount++;
-        errorsList.push(`Ligne ${index + 2}: N° de passeport manquant`);
+        failedRows.push({
+          line: index + 2,
+          passport: 'NON RENSEIGNÉ',
+          name: passengerDisplayName,
+          reason: 'Numéro de passeport obligatoire manquant dans la ligne',
+        });
         continue;
       }
 
@@ -351,10 +409,10 @@ function Passengers() {
       const rawDob = getRowValue(row, ['datenaissance', 'dateofbirth', 'dob', 'datebith', 'naissance']);
       const dateOfBirth = parseDateValue(rawDob, '1990-01-01');
 
-      const rawBanDate = getRowValue(row, ['dateinterdiction', 'datesignalement', 'bandate', 'dateban']);
+      const rawBanDate = getRowValue(row, ['datesignalement', 'dateinterdiction', 'bandate', 'dateban']);
       const banDate = parseDateValue(rawBanDate, today);
 
-      const rawEndDate = getRowValue(row, ['fininterdiction', 'datefinban', 'banenddate', 'echeance', 'dateecheance']);
+      const rawEndDate = getRowValue(row, ['echeance', 'dateecheance', 'fininterdiction', 'datefinban', 'banenddate']);
       const banEndDate = rawEndDate ? parseDateValue(rawEndDate) : undefined;
 
       const rawDuration = getRowValue(row, ['type', 'typeduree', 'banduration', 'duree']).toUpperCase();
@@ -366,6 +424,11 @@ function Passengers() {
       if (rawSeverity.includes('CRIT')) severity = 'CRITICAL';
       else if (rawSeverity.includes('HAUT') || rawSeverity.includes('HIGH')) severity = 'HIGH';
       else if (rawSeverity.includes('FAIB') || rawSeverity.includes('BAS') || rawSeverity.includes('LOW')) severity = 'LOW';
+
+      const rawStatus = getRowValue(row, ['statut', 'status']).toUpperCase();
+      let status: 'ACTIVE' | 'EXPIRED' | 'UNDER_REVIEW' = 'ACTIVE';
+      if (rawStatus.includes('EXP')) status = 'EXPIRED';
+      else if (rawStatus.includes('REV') || rawStatus.includes('EXAM')) status = 'UNDER_REVIEW';
 
       const notes = getRowValue(row, ['notes', 'commentaires', 'observations', 'instructions', 'rapport']);
 
@@ -391,13 +454,33 @@ function Passengers() {
           banEndDate: banDuration === 'TEMPORARY' ? (banEndDate || undefined) : undefined,
           severity: severity,
           notes: notes || '',
-          status: 'ACTIVE',
+          status: status,
         });
         successCount++;
       } catch (err: any) {
         errorCount++;
-        const msg = err?.response?.data?.message || err?.message || 'Erreur inconnue';
-        errorsList.push(`Ligne ${index + 2} (${passportNumber}): ${msg}`);
+        const rawServerMsg = err?.response?.data?.message || err?.response?.data?.error || err?.message || '';
+        let explicitReason = 'Erreur lors de l\'enregistrement';
+        if (
+          rawServerMsg.toLowerCase().includes('already exists') ||
+          rawServerMsg.toLowerCase().includes('existe déjà') ||
+          rawServerMsg.toLowerCase().includes('duplicate') ||
+          rawServerMsg.toLowerCase().includes('contrainte') ||
+          rawServerMsg.toLowerCase().includes('passeport')
+        ) {
+          explicitReason = 'Ce numéro de passeport existe déjà dans la base des passagers interdits (doublon)';
+        } else if (rawServerMsg.toLowerCase().includes('email')) {
+          explicitReason = 'Format d\'adresse email invalide ou doublon email';
+        } else if (rawServerMsg) {
+          explicitReason = rawServerMsg;
+        }
+
+        failedRows.push({
+          line: index + 2,
+          passport: passportNumber,
+          name: passengerDisplayName,
+          reason: explicitReason,
+        });
       }
     }
 
@@ -407,13 +490,21 @@ function Passengers() {
       fileInputRef.current.value = '';
     }
 
-    if (successCount > 0 && errorCount === 0) {
-      showNotification('success', `Importation réussie : ${successCount} passager(s) enregistré(s) avec succès !`);
-    } else if (successCount > 0 && errorCount > 0) {
-      showNotification('success', `${successCount} passager(s) importé(s). ${errorCount} ligne(s) ignorée(s) ou en doublon.`);
+    if (errorCount > 0) {
+      setImportSummaryReport({
+        isOpen: true,
+        total: successCount + errorCount,
+        successCount,
+        errorCount,
+        failedRows,
+      });
+      if (successCount > 0) {
+        showNotification('success', `${successCount} passager(s) importé(s) avec succès. ${errorCount} passager(s) non enregistré(s).`);
+      } else {
+        showNotification('error', `Aucun passager n'a pu être importé (${errorCount} rejeté(s)). Consultez le rapport.`);
+      }
     } else {
-      const detail = errorsList.slice(0, 2).join(' | ');
-      showNotification('error', `Échec de l'importation (${errorCount} erreur(s)) : ${detail || 'Vérifiez le format du fichier.'}`);
+      showNotification('success', `Importation réussie : ${successCount} passager(s) enregistré(s) avec succès !`);
     }
   };
 
@@ -552,6 +643,9 @@ function Passengers() {
               {t('passengers.title')}
             </h1>
           </div>
+          <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mt-1">
+            {t('passengers.subtitle')}
+          </p>
         </div>
 
         {/* Action buttons */}
@@ -564,17 +658,17 @@ function Passengers() {
                   type="button"
                   onClick={() => setIsTemplateMenuOpen((prev) => !prev)}
                   className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 rounded-xl text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
-                  title={t('passengers.downloadTemplateTitle')}
+                  title="Télécharger un modèle exemplaire de fichier (CSV ou Excel) à remplir"
                 >
                   <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                  <span>{t('passenger.downloadTemplate') || t('passenger.template')}</span>
+                  <span>{t('passenger.downloadTemplate') || 'Modèle à importer'}</span>
                   <ChevronDown className={`h-3 w-3 transition-transform ${isTemplateMenuOpen ? 'rotate-180' : ''}`} />
                 </button>
 
                 {isTemplateMenuOpen && (
                   <div className="absolute left-0 mt-1.5 w-48 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-xl z-50 py-1 text-xs divide-y divide-gray-100 dark:divide-gray-700/60 animate-in fade-in">
                     <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                      {t('passengers.templateFormat')}
+                      Format du modèle
                     </div>
                     <div className="py-1">
                       <button
@@ -582,7 +676,7 @@ function Passengers() {
                         onClick={() => downloadTemplate('excel')}
                         className="w-full text-left px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-gray-700 dark:text-gray-200 flex items-center justify-between transition-colors"
                       >
-                        <span className="font-medium">{t('passengers.excelTemplate') || 'Modèle Excel (.xlsx)'}</span>
+                        <span className="font-medium">Modèle Excel (.xlsx)</span>
                         <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 px-1.5 py-0.5 rounded font-mono font-bold">XLSX</span>
                       </button>
                       <button
@@ -590,7 +684,7 @@ function Passengers() {
                         onClick={() => downloadTemplate('csv')}
                         className="w-full text-left px-3 py-2 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-gray-700 dark:text-gray-200 flex items-center justify-between transition-colors"
                       >
-                        <span className="font-medium">{t('passengers.csvTemplate') || 'Modèle CSV (.csv)'}</span>
+                        <span className="font-medium">Modèle CSV (.csv)</span>
                         <span className="text-[10px] bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 px-1.5 py-0.5 rounded font-mono font-bold">CSV</span>
                       </button>
                     </div>
@@ -691,10 +785,10 @@ function Passengers() {
                 className="w-full border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
               >
                 <option value="">{t('passengers.all')}</option>
-                <option value="CRITICAL">{t('passengers.critical')}</option>
-                <option value="HIGH">{t('passengers.high')}</option>
-                <option value="MEDIUM">{t('passengers.medium')}</option>
-                <option value="LOW">{t('passengers.low')}</option>
+                <option value="CRITICAL">Critique</option>
+                <option value="HIGH">Élevé</option>
+                <option value="MEDIUM">Moyen</option>
+                <option value="LOW">Faible</option>
               </select>
             </div>
 
@@ -708,9 +802,9 @@ function Passengers() {
                 className="w-full border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
               >
                 <option value="">{t('passengers.all')}</option>
-                <option value="ACTIVE">{t('passengers.active')}</option>
-                <option value="EXPIRED">{t('passengers.expired')}</option>
-                <option value="UNDER_REVIEW">{t('passengers.underReview')}</option>
+                <option value="ACTIVE">Actif</option>
+                <option value="EXPIRED">Expiré</option>
+                <option value="UNDER_REVIEW">En révision</option>
               </select>
             </div>
 
@@ -724,8 +818,8 @@ function Passengers() {
                 className="w-full border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
               >
                 <option value="">{t('passengers.all')}</option>
-                <option value="PERMANENT">{t('passengers.permanent')}</option>
-                <option value="TEMPORARY">{t('passengers.temporary')}</option>
+                <option value="PERMANENT">Définitif</option>
+                <option value="TEMPORARY">Temporaire</option>
               </select>
             </div>
 
@@ -778,7 +872,7 @@ function Passengers() {
           </div>
 
           <div className="flex items-center space-x-1.5 pl-3 border-l border-gray-200 dark:border-gray-700">
-            <span className="text-gray-500">{t('passengers.perPage')} :</span>
+            <span className="text-gray-500">Par page :</span>
             <select
               value={itemsPerPage}
               onChange={handleItemsPerPageChange}
@@ -1083,6 +1177,94 @@ function Passengers() {
         passenger={modalState.passenger}
         mode={modalState.mode}
       />
+
+      {/* Modal détaillé du rapport d'importation avec raisons spécifiques par passager */}
+      {importSummaryReport && importSummaryReport.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full border border-gray-200 dark:border-gray-700 overflow-hidden flex flex-col max-h-[85vh]">
+            {/* Entête */}
+            <div className="p-5 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800/80">
+              <div className="flex items-center space-x-3">
+                <span className="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="w-5 h-5" />
+                </span>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                    Rapport détaillé d'importation
+                  </h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {importSummaryReport.successCount} enregistré(s) • {importSummaryReport.errorCount} rejeté(s) sur {importSummaryReport.total} ligne(s)
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setImportSummaryReport(null)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Statistiques d'import */}
+            <div className="p-4 grid grid-cols-2 gap-3 bg-gray-50/50 dark:bg-gray-900/30 border-b border-gray-200 dark:border-gray-700">
+              <div className="p-3 rounded-xl bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-900/40 text-green-800 dark:text-green-300">
+                <span className="text-xs block font-medium">Passagers importés avec succès</span>
+                <span className="text-xl font-bold font-mono">{importSummaryReport.successCount}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 text-red-800 dark:text-red-300">
+                <span className="text-xs block font-medium">Passagers non enregistrés</span>
+                <span className="text-xl font-bold font-mono">{importSummaryReport.errorCount}</span>
+              </div>
+            </div>
+
+            {/* Liste des passagers non enregistrés avec la raison exacte */}
+            <div className="p-5 overflow-y-auto space-y-3 flex-1">
+              <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">
+                Détail des passagers rejetés et causes spécifiques :
+              </p>
+              <div className="space-y-2.5">
+                {importSummaryReport.failedRows.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3.5 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50/40 dark:bg-red-950/20 flex items-start justify-between gap-3"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-gray-900 dark:text-white">
+                          {item.name}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-300 font-mono text-[11px] font-semibold">
+                          Passeport: {item.passport}
+                        </span>
+                        <span className="text-[10px] text-gray-400">
+                          (Ligne {item.line})
+                        </span>
+                      </div>
+                      <p className="text-xs text-red-700 dark:text-red-300 flex items-center space-x-1 font-medium">
+                        <span>•</span>
+                        <span>{item.reason}</span>
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Pied du modal */}
+            <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 flex items-center justify-between">
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                Astuce : Vous pouvez corriger les passeports en doublon ou les informations manquantes dans votre fichier source et réimporter.
+              </p>
+              <button
+                onClick={() => setImportSummaryReport(null)}
+                className="px-4 py-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 font-bold rounded-xl text-xs hover:bg-gray-800 dark:hover:bg-gray-100 transition cursor-pointer"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {notification && (
         <div

@@ -19,13 +19,11 @@ export default function GateCheck() {
     if (e) e.preventDefault();
     const query = passportInput.trim();
     if (!query) return;
-
     setSearching(true);
     try {
       const found = await checkPassportQuick(query);
       setMatchedPassenger(found);
       setHasSearched(true);
-
       const historyEntry = {
         passport: query.toUpperCase(),
         timestamp: new Date().toLocaleTimeString(),
@@ -35,7 +33,7 @@ export default function GateCheck() {
       };
       setScanHistory((prev) => [historyEntry, ...prev.slice(0, 9)]);
     } catch (err) {
-      console.error('Erreur vérification passeport Spring Boot:', err);
+      console.error('Erreur vérification passeport:', err);
     } finally {
       setSearching(false);
     }
@@ -191,7 +189,7 @@ export default function GateCheck() {
                     <div className="flex justify-between py-1 border-b border-gray-100 dark:border-gray-700">
                       <span className="text-gray-500">{t('gate.banTypeLabel')} :</span>
                       <span className="font-bold text-gray-900 dark:text-white">
-                        {matchedPassenger.banDuration === 'PERMANENT' ? 'DÉFINITIF' : 'TEMPORAIRE'}
+                        {matchedPassenger.banDuration === 'PERMANENT' ? t('gate.permanent') : t('gate.temporary')}
                       </span>
                     </div>
                     <div className="flex justify-between py-1 border-b border-gray-100 dark:border-gray-700">
@@ -217,7 +215,7 @@ export default function GateCheck() {
                   </p>
                   {matchedPassenger.notes && (
                     <p className="text-[11px] text-gray-500 dark:text-gray-400 italic">
-                      Note sûreté : {matchedPassenger.notes}
+                      {t('gate.notesLabel')} : {matchedPassenger.notes}
                     </p>
                   )}
                 </div>

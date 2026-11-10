@@ -567,12 +567,16 @@ export const authService = {
 
 export const userService = {
   changePassword: async (
-    id: number,
+    idOrEmail: number | string,
+    name: string,
     avatarUrl: string,
-    currentPassword: string,
-    newPassword: string
+    currentPassword?: string,
+    newPassword?: string
   ): Promise<void> => {
-    await api.post(`/users/${id}/password`, { avatarUrl, currentPassword, newPassword });
+    const url = typeof idOrEmail === 'number' || /^\d+$/.test(String(idOrEmail))
+      ? `/users/${idOrEmail}/password`
+      : `/users/email/${idOrEmail}/password`;
+    await api.post(url, { name, avatarUrl, currentPassword, newPassword });
   },
 
   getAllUsers: async (): Promise<ApiUser[]> => {
@@ -585,34 +589,55 @@ export const userService = {
     return response.data;
   },
 
+  getUserByEmail: async (email: string): Promise<ApiUser> => {
+    const response = await api.get<ApiUser>(`/users/email/${email}`);
+    return response.data;
+  },
+
   createUser: async (user: CreateUserRequest): Promise<ApiUser> => {
     const response = await api.post<ApiUser>('/users', user);
     return response.data;
   },
 
-  updateUser: async (id: number, user: Partial<ApiUser> & { password?: string }): Promise<ApiUser> => {
-    const response = await api.put<ApiUser>(`/users/${id}`, user);
+  updateUser: async (idOrEmail: number | string, user: Partial<ApiUser> & { password?: string }): Promise<ApiUser> => {
+    const url = typeof idOrEmail === 'number' || /^\d+$/.test(String(idOrEmail))
+      ? `/users/${idOrEmail}`
+      : `/users/email/${idOrEmail}`;
+    const response = await api.put<ApiUser>(url, user);
     return response.data;
   },
 
-  deleteUser: async (id: number): Promise<void> => {
-    await api.delete(`/users/${id}`);
+  deleteUser: async (idOrEmail: number | string): Promise<void> => {
+    const url = typeof idOrEmail === 'number' || /^\d+$/.test(String(idOrEmail))
+      ? `/users/${idOrEmail}`
+      : `/users/email/${idOrEmail}`;
+    await api.delete(url);
   },
 
-  getUserStats: async (): Promise<{ totalUsers: number; adminCount: number; activeUsers: number }> => {
+  getUserStats: async (): Promise<{ totalUsers: number; adminCount: number; superAdminCount: number; activeUsers: number }> => {
     const response = await api.get('/users/stats');
     return response.data;
   },
 
-  uploadAvatar: async (id: number, file: File): Promise<{ avatarUrl: string }> => {
+  uploadAvatar: async (idOrEmail: number | string, file: File): Promise<{ avatarUrl: string }> => {
+    if (!idOrEmail || idOrEmail === 'NaN' || Number.isNaN(idOrEmail)) {
+      return userService.uploadAvatarForNewUser(file);
+    }
     const formData = new FormData();
     formData.append('avatar', file);
-    const response = await api.post<{ avatarUrl: string }>(`/users/${id}/avatar`, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-    return response.data;
+    const url = typeof idOrEmail === 'number' || /^\d+$/.test(String(idOrEmail))
+      ? `/users/${idOrEmail}/avatar`
+      : `/users/email/${idOrEmail}/avatar`;
+    try {
+      const response = await api.post<{ avatarUrl: string }>(url, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      return response.data;
+    } catch {
+      return userService.uploadAvatarForNewUser(file);
+    }
   },
 
   uploadAvatarForNewUser: async (file: File): Promise<{ avatarUrl: string }> => {
@@ -626,8 +651,11 @@ export const userService = {
     return response.data;
   },
 
-  resetMFA: async (id: number): Promise<string> => {
-    const response = await api.post(`/users/${id}/reset-mfa`);
+  resetMFA: async (idOrEmail: number | string): Promise<string> => {
+    const url = typeof idOrEmail === 'number' || /^\d+$/.test(String(idOrEmail))
+      ? `/users/${idOrEmail}/reset-mfa`
+      : `/users/email/${idOrEmail}/reset-mfa`;
+    const response = await api.post(url);
     return response.data.status;
   },
 };
@@ -681,13 +709,19 @@ export const passengerService = {
     return response.data;
   },
 
-  updatePassenger: async (id: number, passenger: Partial<CreatePassengerRequest>): Promise<ApiPassenger> => {
-    const response = await api.put<ApiPassenger>(`/passengers/${id}`, passenger);
+  updatePassenger: async (idOrPassport: number | string, passenger: Partial<CreatePassengerRequest>): Promise<ApiPassenger> => {
+    const url = typeof idOrPassport === 'number' || /^\d+$/.test(String(idOrPassport))
+      ? `/passengers/${idOrPassport}`
+      : `/passengers/passport/${idOrPassport}`;
+    const response = await api.put<ApiPassenger>(url, passenger);
     return response.data;
   },
 
-  deletePassenger: async (id: number): Promise<void> => {
-    await api.delete(`/passengers/${id}`);
+  deletePassenger: async (idOrPassport: number | string): Promise<void> => {
+    const url = typeof idOrPassport === 'number' || /^\d+$/.test(String(idOrPassport))
+      ? `/passengers/${idOrPassport}`
+      : `/passengers/passport/${idOrPassport}`;
+    await api.delete(url);
   },
 
   searchPassengers: async (query: string, page = 0, size = 10): Promise<PageResponse<ApiPassenger>> => {

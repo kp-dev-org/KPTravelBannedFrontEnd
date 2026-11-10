@@ -21,7 +21,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import Select from 'react-select';
 import countryList from 'react-select-country-list';
-import { BannedPassenger } from '../contexts/DataContext';
+import { BannedPassenger, useData } from '../contexts/DataContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { passengerService } from '../services/Api';
 
@@ -98,8 +98,16 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
   const [isDialDropdownOpen, setIsDialDropdownOpen] = useState(false);
   const [dialSearchQuery, setDialSearchQuery] = useState('');
   const dialDropdownRef = useRef<HTMLDivElement>(null);
+  const { checkPassportQuick, passengers } = useData();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [uploadingImage, setUploadingImage] = useState(false);
+
+  // Vérification automatique en temps réel de l'existence du passeport
+  const [passportCheckStatus, setPassportCheckStatus] = useState<{
+    checking: boolean;
+    exists: boolean;
+    matchedPassenger?: BannedPassenger;
+  }>({ checking: false, exists: false });
 
   // Close dial dropdown when clicking outside
   useEffect(() => {
@@ -185,8 +193,74 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
         imageUrl: '',
       });
       setErrors({});
+      setPassportCheckStatus({ checking: false, exists: false });
     }
   }, [passenger, mode, isOpen]);
+
+  // Vérification automatique en temps réel dès que l'utilisateur saisit ou modifie le numéro de passeport
+  useEffect(() => {
+    const rawVal = formData.passportNumber?.trim().toUpperCase();
+    if (!rawVal || rawVal.length < 2) {
+      setPassportCheckStatus({ checking: false, exists: false });
+      return;
+    }
+
+    // En mode édition, si le passeport est identique à celui du passager en cours, ce n'est pas un conflit
+    if (mode === 'edit' && passenger && passenger.passportNumber?.trim().toUpperCase() === rawVal) {
+      setPassportCheckStatus({ checking: false, exists: false });
+      return;
+    }
+
+    let isSubscribed = true;
+    setPassportCheckStatus((prev) => ({ ...prev, checking: true }));
+
+    const timer = setTimeout(async () => {
+      // 1. Recherche instantanée dans la liste locale des passagers
+      const localMatch = passengers.find(
+        (p) =>
+          p.passportNumber?.trim().toUpperCase() === rawVal &&
+          (!passenger || p.id !== passenger.id)
+      );
+
+      if (localMatch) {
+        if (isSubscribed) {
+          setPassportCheckStatus({
+            checking: false,
+            exists: true,
+            matchedPassenger: localMatch,
+          });
+        }
+        return;
+      }
+
+      // 2. Recherche distante vers l'API Spring Boot
+      try {
+        const remoteMatch = await checkPassportQuick(rawVal);
+        if (!isSubscribed) return;
+        if (remoteMatch && (!passenger || remoteMatch.id !== passenger.id)) {
+          setPassportCheckStatus({
+            checking: false,
+            exists: true,
+            matchedPassenger: remoteMatch,
+          });
+        } else {
+          setPassportCheckStatus({
+            checking: false,
+            exists: false,
+          });
+        }
+      } catch {
+        if (isSubscribed) {
+          setPassportCheckStatus({ checking: false, exists: false });
+        }
+      }
+    }, 350);
+
+    return () => {
+      isSubscribed = false;
+      clearTimeout(timer);
+    };
+  }, [formData.passportNumber, mode, passenger, passengers, checkPassportQuick]);
 
   const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -404,6 +478,12 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
                 <Shield className="w-6 h-6" />
               </div>
               <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">
+                    Sûreté Aérienne ASKY Airlines
+                  </span>
+                  <span className="text-[10px] text-slate-400">• Formulaire Réglementaire</span>
+                </div>
                 <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
                   {mode === 'create'
                     ? t('modal.createTitle')
@@ -521,29 +601,79 @@ export default function PassengerModal({ isOpen, onClose, onSave, passenger, mod
                     {errors.lastName && <p className="text-red-500 text-[11px] mt-1">{errors.lastName}</p>}
                   </div>
 
-                  {/* Passeport */}
+                  {/* Passeport avec vérification en temps réel d'existence */}
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
                         {t('passengers.passnumder')} *
                       </label>
-                      <span className="text-[10px] text-gray-400 font-mono">
-                        {formData.passportNumber.length}/20
-                      </span>
+                      <div className="flex items-center space-x-1.5">
+                        {passportCheckStatus.checking && (
+                          <span className="flex items-center space-x-1 text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                            <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                            <span>Vérification...</span>
+                          </span>
+                        )}
+                        <span className="text-[10px] text-gray-400 font-mono">
+                          {formData.passportNumber.length}/20
+                        </span>
+                      </div>
                     </div>
-                    <input
-                      type="text"
-                      maxLength={20}
-                      placeholder="Ex: TG982341"
-                      value={formData.passportNumber}
-                      onChange={(e) => handleInputChange('passportNumber', e.target.value.toUpperCase())}
-                      disabled={isReadOnly}
-                      className={`w-full px-3.5 py-2 text-xs sm:text-sm rounded-xl bg-gray-50 dark:bg-gray-800 border font-mono uppercase tracking-wider ${
-                        errors.passportNumber
-                          ? 'border-red-500 ring-1 ring-red-500'
-                          : 'border-gray-300 dark:border-gray-700'
-                      } text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500`}
-                    />
+                    <div className="relative">
+                      <input
+                        type="text"
+                        maxLength={20}
+                        placeholder="Ex: TG982341"
+                        value={formData.passportNumber}
+                        onChange={(e) => handleInputChange('passportNumber', e.target.value.toUpperCase())}
+                        disabled={isReadOnly}
+                        className={`w-full px-3.5 py-2 pr-10 text-xs sm:text-sm rounded-xl bg-gray-50 dark:bg-gray-800 border font-mono uppercase tracking-wider ${
+                          errors.passportNumber
+                            ? 'border-red-500 ring-1 ring-red-500'
+                            : passportCheckStatus.exists
+                            ? 'border-red-500 dark:border-red-500 ring-2 ring-red-500/20 bg-red-50/40 dark:bg-red-950/20'
+                            : formData.passportNumber.trim().length >= 3 && !passportCheckStatus.checking
+                            ? 'border-green-500 dark:border-green-500'
+                            : 'border-gray-300 dark:border-gray-700'
+                        } text-gray-900 dark:text-white focus:outline-none focus:ring-2 ${
+                          passportCheckStatus.exists ? 'focus:ring-red-500' : 'focus:ring-amber-500'
+                        }`}
+                      />
+                      <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                        {passportCheckStatus.checking ? (
+                          <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                        ) : passportCheckStatus.exists ? (
+                          <AlertTriangle className="w-4 h-4 text-red-500" />
+                        ) : formData.passportNumber.trim().length >= 3 ? (
+                          <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {/* Alerte contextuelle immédiate si le passeport existe déjà */}
+                    {passportCheckStatus.exists && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mt-1.5 p-2.5 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs flex items-start space-x-2"
+                      >
+                        <AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="font-bold">
+                             {t('passport.exists')}
+                          </p>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {/* Message d'attestation si le passeport est nouveau et disponible */}
+                    {!passportCheckStatus.exists && !passportCheckStatus.checking && formData.passportNumber.trim().length >= 3 && !errors.passportNumber && (
+                      <p className="text-green-600 dark:text-green-400 text-[11px] mt-1 flex items-center space-x-1 font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>{t('passport.available')}</span>
+                      </p>
+                    )}
+
                     {errors.passportNumber && (
                       <p className="text-red-500 text-[11px] mt-1">{errors.passportNumber}</p>
                     )}

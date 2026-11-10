@@ -97,7 +97,7 @@ const translations = {
     'dashboard.quickCheckBtn': 'Tester la clearance',
     'dashboard.quickCheckTesting': 'Interrogation...',
     'dashboard.quickCheckPlaceholder': 'Saisissez un N° de passeport pour interroger Spring Boot...',
-    'dashboard.quickCheckResultFound': 'SIGNALEMENT SÛRETÉ ACTIF SUR SPRING BOOT',
+    'dashboard.quickCheckResultFound': 'SIGNALEMENT SÛRETÉ',
     'dashboard.openFolder': 'Ouvrir dossier',
     'dashboard.quickCheckResultNotFound': 'Clearance validée : Le document',
     'dashboard.quickCheckResultNotFoundDesc': 'n\'est pas fiché sur la liste des passagers interdits ASKY.',
@@ -136,7 +136,7 @@ const translations = {
     'gate.allowedDesc': 'Aucune interdiction de vol ni signalement sur ce document.',
     'gate.banned': 'ACCÈS REFUSÉ - SIGNALEMENT SÛRETÉ',
     'gate.bannedDesc': 'Ce passager figure au registre des personnes interdites de vol ASKY.',
-    'gate.passportLabel': 'Scanner le passeport ou saisir le numéro de document',
+    'gate.passportLabel': 'numero de passeport',
     'gate.bannedTitle': 'INTERDICTION DE VOL EN VIGUEUR',
     'gate.alertSecurity': 'Alerter la Sûreté / PAF',
     'gate.reasonLabel': 'Motif de sécurité consigné',
@@ -153,6 +153,11 @@ const translations = {
     'gate.nationalityLabel': 'Nationalité',
     'gate.bannedmessage': 'BANNIS',
     'gate.allowedmessage': 'AUTORISÉ',
+    'gate.passengerInfo': 'Informations passager',
+    'gate.banDirectives': 'Consignes sûreté ',
+    'gate.permanent': 'DÉFINITIVE',
+    'gate.temporary': 'TEMPORAIRE',
+    'gate.notesLabel': 'Notes sûreté',
 
   
 
@@ -224,7 +229,25 @@ const translations = {
     'passengers.low': 'Faible',
     'passengers.unknown': 'Inconnu',
     'passengers.perpage': 'par page',
-
+    'passengers.deleteSuccess': 'Passager banni supprimé avec succès.',
+    'passengers.deleteError': 'Erreur lors de la suppression :',
+    'passengers.createSuccess': 'Passager banni enregistré avec succès sur Spring Boot.',
+    'passengers.updateSuccess': 'Passager mis à jour avec succès.',
+    'passengers.updateError': 'Erreur lors de la mise à jour :',
+    'passengers.importSuccessMessage': 'Importation réussie :',
+    'passengers.lastName': 'Nom de famille',
+    'passengers.firstName': 'Prénom',
+    'passengers.email': 'Adresse email',
+    'passengers.phone': 'Numéro de téléphone',
+    'passengers.passportNumber': 'Numéro de passeport',
+    'passengers.dateOfBirth': 'Date de naissance',
+    'passengers.banDate': 'Date d\'inscription au fichier',
+    'passengers.banReason': 'Motif de l\'interdiction',
+    'passengers.banNotes': 'Notes d\'instruction',
+    'passengers.banStatus': 'Statut du dossier',
+    'passengers.banSeverity': 'Niveau de gravité',
+    'passengers.importerTitle': 'Importer des passagers à partir d\'un fichier CSV ou Excel (.xlsx, .xls)',
+    'passengers.importer': 'Importer',
 
     // Print Passenger Dossier
     'print.headerTitle': 'ASKY AIRLINES • DIRECTION DE LA SÛRETÉ',
@@ -444,6 +467,10 @@ const translations = {
     'profile.uploading': 'Téléversement en cours...',
     'profile.uploadError': 'Erreur de téléversement',
     'profile.avatar': 'Photo de profil de l\'utilisateur',
+    'profile.currentPasswordRequired': 'Le mot de passe actuel est requis',
+    'profile.passwordsDoNotMatch': 'Les mots de passe ne correspondent pas',
+    'profile.passwordTooShort': 'Le mot de passe doit contenir au moins 6 caractères',  
+    
 
     // Common
     'common.save': 'Enregistrer',
@@ -533,7 +560,10 @@ const translations = {
     'avatar.confirmUploadPrompt': "Confirmer l'enregistrement de cette image ?",
     'avatar.uploading': "Téléversement...",
     'avatar.confirm': "Confirmer",
-    'avatar.change': "Changer"
+    'avatar.change': "Changer",
+
+    'passport.exists': 'Passport déjà enregistré',
+    'passport.available': 'Passport disponible '
 
   },
   en: {
@@ -625,7 +655,7 @@ const translations = {
     'dashboard.quickCheckBtn': 'Check Clearance',
     'dashboard.quickCheckTesting': 'Checking...',
     'dashboard.quickCheckPlaceholder': 'Enter passport number to query Spring Boot...',
-    'dashboard.quickCheckResultFound': 'ACTIVE SECURITY REPORT ON SPRING BOOT',
+    'dashboard.quickCheckResultFound': 'ACTIVE SECURITY ',
     'dashboard.quickCheckResultNotFound': 'Clearance approved: Document',
     'dashboard.quickCheckResultNotFoundDesc': 'is not listed in the ASKY Banned Passengers registry.',
     'dashboard.openFolder': 'Open Dossier',
@@ -664,7 +694,7 @@ const translations = {
     'gate.allowedDesc': 'No active flight ban or security flag on this passport.',
     'gate.banned': 'BOARDING DENIED - SECURITY FLAG',
     'gate.bannedDesc': 'This passenger is actively listed in the ASKY Banned Passengers registry.',
-    'gate.passportLabel': 'Scan passport or enter document number',
+    'gate.passportLabel': 'Passport Number',
     'gate.bannedTitle': 'ACTIVE FLIGHT BAN IN EFFECT',  
     'gate.alertSecurity': 'Alert Security / Police',
     'gate.dateOfBirthLabel': 'Date of Birth',
@@ -685,6 +715,31 @@ const translations = {
     'gate.nationalityLabel': 'Nationality',
     'gate.bannedmessage': 'BANNED',
     'gate.allowedmessage': 'CLEARED',
+    'gate.passengerIdentified': 'Passenger Identified',
+    'gate.noResults': 'No recent scans found',
+    'gate.noResultsDesc': 'Try scanning a passport or entering a document number to check clearance.',
+    'gate.loading': 'Checking clearance...',
+    'gate.error': 'Error during clearance check',
+    'gate.errorDesc': 'An error occurred while verifying the passenger\'s clearance. Please try again.',
+    'gate.retry': 'Retry',
+    'gate.clearanceCheck': 'Clearance Check',
+    'gate.clearanceResult': 'Clearance Result',
+    'gate.clearanceDetails': 'Clearance Details',
+    'gate.clearanceStatus': 'Clearance Status',
+    'gate.clearanceTimestamp': 'Checked At',
+    'gate.clearanceFlight': 'Flight Number',
+    'gate.clearancePassenger': 'Passenger Name',
+    'gate.clearancePassport': 'Passport Number',
+    'gate.clearanceNationality': 'Nationality',
+    'gate.clearanceSeverity': 'Severity Level',
+    'gate.clearanceBanType': 'Ban Type',
+    'gate.clearanceBanDate': 'Ban Date',
+    'gate.clearanceBanEndDate': 'Ban End Date',
+    'gate.clearanceReason': 'Security Reason',
+    'gate.permanent': 'Permanent Ban',
+    'gate.temporary': 'Temporary Ban',
+     'gate.notesLabel': 'Notes & Instructions',
+     'gate.passengerInfo': 'Passenger Information',
 
     // Manifest
     'manifest.title': 'Flight Manifest Screener',
@@ -752,7 +807,26 @@ const translations = {
     'passengers.low': 'Low',
     'passengers.unknown': 'Unknown',
     'passengers.perpage': 'per page',
+    'passenger.deleteSuccess': 'Banned passenger deleted successfully.',
+    'passenger.deleteError': 'Error occurred while deleting the banned passenger:',
+    'passenger.createSuccess': 'Banned passenger created successfully on Spring Boot.',
+    'passenger.updateSuccess': 'Banned passenger updated successfully.',
+    'passenger.updateError': 'Error occurred while updating the banned passenger:',
+    'passengers.lastName': 'Last Name',
+    'passengers.firstNames': 'First Name(s)',
+    'passengers.phone': 'Phone Number',
+    'passengers.email': 'Email Address',
+    'passengers.passportNumber': 'Passport Number',
+    'passengers.banType': 'Ban Type',
+    'passengers.effectiveDate': 'Effective Date',
+    'passengers.dateOfBirth': 'Date of Birth',
+    'passengers.expiryDate': 'Expiration Date',
+    'passengers.reason': 'Official Reason',
+    'passengers.notes': 'Confidential Notes & Instructions',
+    'passengers.importer': 'Import CSV',
+    'passengers.exporter': 'Export',
 
+ 
     // Passenger Detail Modal & Photo Frame
     'detail.title': 'Aviation Security File • ASKY Central Registry',
     'detail.photoTitle': 'ID Photo',
@@ -983,6 +1057,13 @@ const translations = {
     'profile.uploading': 'Uploading...',
     'profile.uploadError': 'Upload error',
     'profile.avatar': 'User profile picture',
+    'profile.passwordRequired': 'Current password is required',
+    'profile.passwordMinLength': 'Password must contain at least 6 characters',
+    'profile.passwordMaxLength': 'Password must not exceed 120 characters',
+    'profile.passwordMismatch': 'Passwords do not match',
+    'profile.passwordInvalid': 'Current password is incorrect',
+    'profile.passwordChangeSuccess': 'Password updated successfully',
+    'profile.passwordChangeError': 'Error updating password',
 
     // Common
     'common.save': 'Save',
@@ -1072,7 +1153,10 @@ const translations = {
     'avatar.confirmUploadPrompt': "Confirm saving this image?",
     'avatar.uploading': "Uploading...",
     'avatar.confirm': "Confirm",
-    'avatar.change': "Change"
+    'avatar.change': "Change",
+
+    'passport.exists': "passport already registered",
+    'passport.available': "passport available",
 
   },
 };

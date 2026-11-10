@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { authService, LoginRequest, userService, setActiveUserEmail, setFlyAskyJwt } from '../services/Api';
-import { useLanguage } from './LanguageContext';
 
 export interface User {
   id?: string;
@@ -38,14 +37,15 @@ interface AuthContextType {
   sessionExpired: boolean;
   reconnect: (password: string) => Promise<any>;
   reconnectVerifyFlyAskyOtp: (challengeId: string, otp: string) => Promise<any>;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Constantes de sécurité d'inactivité (20 minutes configurées selon la demande utilisateur)
-const INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000; 
-const INACTIVITY_WARNING_MS = 19 * 60 * 1000; 
-const KEEP_ALIVE_INTERVAL_MS = 3 * 60 * 1000; 
+const INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes = 1 200 000 ms
+const INACTIVITY_WARNING_MS = 19 * 60 * 1000; // Déclenchement de l'avertissement à 19 minutes (reste 60 secondes)
+const KEEP_ALIVE_INTERVAL_MS = 3 * 60 * 1000; // Rafraîchissement glissant du backend toutes les 3 minutes si l'utilisateur est actif
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -58,7 +58,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const lastActivityRef = useRef<number>(Date.now());
   const lastPingRef = useRef<number>(Date.now());
   const userRef = useRef<User | null>(user);
-  const { t } = useLanguage();
 
   useEffect(() => {
     userRef.current = user;
@@ -101,7 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch {}
     setInactivityMessage(
-      t("session_expired")
+      "Votre session a été verrouillée automatiquement après 20 minutes d'inactivité par mesure de sûreté."
     );
     authService.expireSession(userRef.current?.email).catch(() => {});
   }, []);
@@ -183,7 +182,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const apiUser = await authService.getCurrentUser();
         if (apiUser) {
           const loggedUser: User = {
-            id: apiUser.id.toString(),
             name: apiUser.name,
             email: apiUser.email,
             role: normalizeUserRole(apiUser.role),
@@ -338,7 +336,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (response.success && response.user) {
         const loggedUser: User = {
-          id: response.user.id.toString(),
           name: response.user.name,
           email: response.user.email,
           role: normalizeUserRole(response.user.role),
@@ -510,6 +507,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const refreshUser = async () => {
+    try {
+      const apiUser = await authService.getCurrentUser();
+      if (apiUser) {
+        const loggedUser: User = {
+          name: apiUser.name,
+          email: apiUser.email,
+          role: normalizeUserRole(apiUser.role),
+          status: (apiUser.status?.toLowerCase() as 'active' | 'inactive') || 'active',
+          avatar: apiUser.avatarUrl,
+          createdAt: apiUser.createdAt,
+          lastLogin: apiUser.lastLogin || new Date().toISOString(),
+        };
+        setUser(loggedUser);
+        setActiveUserEmail(loggedUser.email);
+      }
+    } catch {}
+  };
+
   const isSuperAdmin = user?.role === 'super-admin';
   const isAdmin = user?.role === 'admin' || user?.role === 'super-admin';
 
@@ -533,6 +549,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         sessionExpired,
         reconnect,
         reconnectVerifyFlyAskyOtp,
+        refreshUser,
       }}
     >
       {children}
